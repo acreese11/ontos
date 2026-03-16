@@ -93,12 +93,15 @@ export function Navigation({ isCollapsed }: NavigationProps) {
     return t(`features:${featureId}.name`, { defaultValue: defaultName });
   };
 
+  // Hide home link when already on home page
+  const isOnHomePage = location.pathname === '/';
+
   return (
     <ScrollArea className="h-full py-2">
       <TooltipProvider delayDuration={0}>
         <nav className={cn("flex flex-col px-1 gap-1")}>
-          {/* Home Link */}
-          {
+          {/* Home Link - hidden when on home page */}
+          {!isOnHomePage && (
             isCollapsed ? (
                   <Tooltip key={homeLink.path}>
                     <TooltipTrigger asChild>
@@ -141,7 +144,7 @@ export function Navigation({ isCollapsed }: NavigationProps) {
                     <span className="flex-1 min-w-0 truncate">{homeLink.name}</span>
                   </NavLink>
             )
-          }
+          )}
           {/* Ungrouped Items (Domains, Teams, Projects) */}
           {ungroupedItems.map((item: FeatureConfig) => {
             const isActive = location.pathname === item.path || location.pathname.startsWith(`${item.path}/`);
