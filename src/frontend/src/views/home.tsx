@@ -20,6 +20,7 @@ import RecentActivity from '@/components/home/recent-activity';
 import { useUserStore } from '@/stores/user-store';
 import ComplianceTrendMini from '@/components/home/compliance-trend-mini';
 import ContractStatusBreakdown from '@/components/home/contract-status-breakdown';
+import CollectionBreakdown from '@/components/home/collection-breakdown';
 import type { DataContractListItem } from '@/types/data-contract';
 import { DataProductStatus } from '@/types/data-product';
 
@@ -31,6 +32,7 @@ interface Stats {
       models: number;
       totalTerms: number;
     };
+    taxonomies: any[];
     loading: boolean;
     error: string | null
   };
@@ -54,7 +56,7 @@ export default function Home() {
   const [stats, setStats] = useState<Stats>({
     dataContracts: { count: 0, loading: true, error: null },
     dataProducts: { count: 0, loading: true, error: null },
-    ontologies: { count: { models: 0, totalTerms: 0 }, loading: true, error: null },
+    ontologies: { count: { models: 0, totalTerms: 0 }, taxonomies: [], loading: true, error: null },
     personas: { count: 0, loading: true, error: null },
     estates: {
       count: 0,
@@ -125,6 +127,7 @@ export default function Home() {
       .then(data => {
         const modelsCount = data?.stats?.taxonomies?.length || 0;
         const totalTerms = (data?.stats?.total_concepts || 0) + (data?.stats?.total_properties || 0);
+        const taxonomies = data?.stats?.taxonomies || [];
 
         setStats(prev => ({
           ...prev,
@@ -133,6 +136,7 @@ export default function Home() {
               models: modelsCount,
               totalTerms: totalTerms
             },
+            taxonomies: taxonomies,
             loading: false,
             error: null
           }
@@ -144,6 +148,7 @@ export default function Home() {
           ...prev,
           ontologies: {
             count: { models: 0, totalTerms: 0 },
+            taxonomies: [],
             loading: false,
             error: error.message
           }
@@ -236,14 +241,25 @@ export default function Home() {
 
   const baseSummaryTiles = useMemo(() => [
     {
-      id: 'compliance',
-      title: t('home:overview.tiles.compliance.title'),
-      value: complianceData.length > 0 ? `${complianceData[complianceData.length - 1].compliance}%` : t('home:overview.tiles.compliance.notAvailable'),
-      loading: complianceLoading,
-      error: complianceError,
-      link: '/compliance',
-      icon: <Scale className="h-4 w-4" />,
-      description: t('home:overview.tiles.compliance.description'),
+      id: 'semantic-models',
+      title: t('home:overview.tiles.semanticModels.title'),
+      value: stats.ontologies.count.totalTerms,
+      loading: stats.ontologies.loading,
+      error: stats.ontologies.error,
+      link: '/semantic-models',
+      icon: <Network className="h-4 w-4" />,
+      description: t('home:overview.tiles.semanticModels.description'),
+       maturity: 'ga',
+    },
+    {
+      id: 'data-products',
+      title: t('home:overview.tiles.dataProducts.title'),
+      value: stats.dataProducts.count,
+      loading: stats.dataProducts.loading,
+      error: stats.dataProducts.error,
+      link: '/data-products',
+      icon: <Database className="h-4 w-4" />,
+      description: t('home:overview.tiles.dataProducts.description'),
       maturity: 'ga',
     },
     {
@@ -258,26 +274,15 @@ export default function Home() {
       maturity: 'ga',
     },
     {
-      id: 'data-products',
-      title: t('home:overview.tiles.dataProducts.title'),
-      value: stats.dataProducts.count,
-      loading: stats.dataProducts.loading,
-      error: stats.dataProducts.error,
-      link: '/data-products',
-      icon: <Database className="h-4 w-4" />,
-      description: t('home:overview.tiles.dataProducts.description'),
+      id: 'compliance',
+      title: t('home:overview.tiles.compliance.title'),
+      value: complianceData.length > 0 ? `${complianceData[complianceData.length - 1].compliance}%` : t('home:overview.tiles.compliance.notAvailable'),
+      loading: complianceLoading,
+      error: complianceError,
+      link: '/compliance',
+      icon: <Scale className="h-4 w-4" />,
+      description: t('home:overview.tiles.compliance.description'),
       maturity: 'ga',
-    },
-    {
-      id: 'semantic-models',
-      title: t('home:overview.tiles.semanticModels.title'),
-      value: `${stats.ontologies.count.models} / ${stats.ontologies.count.totalTerms}`,
-      loading: stats.ontologies.loading,
-      error: stats.ontologies.error,
-      link: '/semantic-models',
-      icon: <Network className="h-4 w-4" />,
-      description: t('home:overview.tiles.semanticModels.description'),
-       maturity: 'ga',
     },
     {
       id: 'estate-manager',
@@ -356,6 +361,26 @@ export default function Home() {
       .slice(0, 4);
   }, [products]);
 
+  // Calculate collection breakdown - show top 4 collections by concept count
+  const collectionBreakdown = useMemo(() => {
+    const taxonomies = stats.ontologies.taxonomies || [];
+    return taxonomies
+      .filter(t => {
+        // Filter out internal meta sources (urn:meta:*)
+        if (t.name && t.name.startsWith('urn:meta:')) return false;
+        // Filter out items without name or zero concepts
+        if (!t.name || typeof t.concepts_count !== 'number' || t.concepts_count <= 0) return false;
+        return true;
+      })
+      .map(t => ({
+        id: t.name, // Use name as ID for filtering
+        name: t.name,
+        count: t.concepts_count
+      }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 4);
+  }, [stats.ontologies.taxonomies]);
+
   const hasAnyAccess = useMemo(() => {
       if (permissionsLoading || !permissions) return false;
       return Object.values(permissions).some(level => level !== FeatureAccessLevel.NONE);
@@ -426,7 +451,7 @@ export default function Home() {
                             <div className="h-4 w-4 text-muted-foreground flex-shrink-0">
                               {tile.icon}
                             </div>
-                            <CardTitle className="text-sm font-medium">
+                            <CardTitle className="text-base font-medium">
                               <Link to={tile.link} className="hover:underline">
                                 {tile.title}
                               </Link>
@@ -470,6 +495,11 @@ export default function Home() {
                           {/* Embed status breakdown in Data Products tile */}
                           {tile.id === 'data-products' && !tile.loading && !tile.error && (
                             <ContractStatusBreakdown statusCounts={productStatusBreakdown} />
+                          )}
+
+                          {/* Embed collection breakdown in Semantic Models tile */}
+                          {tile.id === 'semantic-models' && !tile.loading && !tile.error && (
+                            <CollectionBreakdown collections={collectionBreakdown} />
                           )}
                         </div>
                       </CardContent>

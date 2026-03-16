@@ -24,8 +24,8 @@
         "description": "Total data products"
       },
       "semanticModels": {
-        "title": "Concept Browser",
-        "description": "Models / Terms"
+        "title": "Concepts",
+        "description": "Business terms and definitions"
       },
       "estates": {
         "title": "Estates",
