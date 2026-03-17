@@ -11,6 +11,16 @@ from datetime import datetime
 from typing import Dict, List, Optional, Any
 from pathlib import Path
 
+SOURCE_ID_PROPERTY = "sourceId"
+
+
+def _is_valid_uuid(value: str) -> bool:
+    try:
+        uuid.UUID(value)
+        return True
+    except (ValueError, AttributeError):
+        return False
+
 import yaml
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
@@ -127,10 +137,20 @@ class DataProductsManager(DeliveryMixin, SearchableAsset):
         # Use provided session or fall back to instance session
         db_session = db if db is not None else self._db
         try:
-            # Generate ID if missing
-            if not product_data.get('id'):
-                product_data['id'] = str(uuid.uuid4())
-                logger.info(f"Generated ID {product_data['id']} for new product.")
+            # Preserve original external ID (e.g. URN) as a custom property
+            original_id = product_data.get('id')
+            if original_id and isinstance(original_id, str) and not _is_valid_uuid(original_id):
+                custom_props = product_data.get('customProperties', [])
+                if isinstance(custom_props, list):
+                    custom_props.append({"property": SOURCE_ID_PROPERTY, "value": original_id})
+                elif isinstance(custom_props, dict):
+                    custom_props[SOURCE_ID_PROPERTY] = original_id
+                product_data['customProperties'] = custom_props
+                logger.info(f"Preserved original ID '{original_id}' as {SOURCE_ID_PROPERTY} custom property")
+
+            # Always generate a UUID for the product ID
+            product_data['id'] = str(uuid.uuid4())
+            logger.info(f"Generated ID {product_data['id']} for new product.")
 
             # Ensure ODPS required fields have defaults
             product_data.setdefault('apiVersion', 'v1.0.0')
@@ -1215,43 +1235,15 @@ class DataProductsManager(DeliveryMixin, SearchableAsset):
                 })
                 continue
 
-            product_id = product_data.get('id')
-
             try:
-                # Generate ID if missing
-                if not product_id:
-                    product_id = str(uuid.uuid4())
-                    product_data['id'] = product_id
-                    logger.info(f"Generated ID {product_id} for product at index {idx}")
-
-                # Check for duplicates
-                existing = self.get_product(product_id)
-                if existing:
-                    errors.append({
-                        "id": product_id,
-                        "index": idx,
-                        "error": "Product with this ID already exists"
-                    })
-                    continue
-
-                # Validate structure
-                try:
-                    DataProductApi(**product_data)
-                except ValidationError as e:
-                    errors.append({
-                        "id": product_id,
-                        "index": idx,
-                        "error": f"Validation failed: {e.errors() if hasattr(e, 'errors') else str(e)}"
-                    })
-                    continue
-
-                # Create product
+                # create_product() always generates a UUID and preserves
+                # any non-UUID original id as a sourceId custom property
                 created_product = self.create_product(product_data)
                 created_products.append(created_product)
-                logger.info(f"Successfully created product {product_id} from batch upload")
+                logger.info(f"Successfully created product {created_product.id} from batch upload")
 
             except Exception as e:
-                error_id = product_id if product_id else f"index_{idx}"
+                error_id = product_data.get('id', f"index_{idx}")
                 errors.append({
                     "id": error_id,
                     "index": idx,

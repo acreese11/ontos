@@ -1,6 +1,6 @@
 import json
 import uuid
-from sqlalchemy import Column, String, Text, func, UniqueConstraint, TIMESTAMP, ForeignKey
+from sqlalchemy import Boolean, Column, String, Text, func, UniqueConstraint, TIMESTAMP, ForeignKey
 from sqlalchemy.dialects.postgresql import JSONB # Use JSONB if available, falls back for others
 from sqlalchemy.orm import relationship
 
@@ -26,6 +26,8 @@ class AppRoleDb(Base):
     approval_privileges = Column(Text, nullable=False, default='{}')
     # Deployment policy JSON (catalog/schema restrictions, nullable for backward compatibility)
     deployment_policy = Column(Text, nullable=True, comment="Deployment policy for this role (catalog/schema restrictions)")
+    is_admin = Column(Boolean, nullable=False, default=False, server_default='false',
+                      comment="Whether this role is the admin role")
 
     # Add timestamp columns - Make them nullable
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=True)

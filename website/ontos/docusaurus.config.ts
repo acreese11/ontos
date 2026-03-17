@@ -18,21 +18,21 @@ const config: Config = {
   },
 
   // Set the production url of your site here
-  url: 'https://your-docusaurus-site.example.com',
+  url: 'https://databrickslabs.github.io',
   // Set the /<baseUrl>/ pathname under which your site is served
   // For GitHub pages deployment, it is often '/<projectName>/'
   baseUrl: '/ontos/',
 
   // GitHub pages deployment config.
   // If you aren't using GitHub pages, you don't need these.
-  organizationName: 'danielrozo-db', // Usually your GitHub org/user name.
-  projectName: 'ontos.github.io', // Usually your repo name.
+  organizationName: 'databrickslabs', // Usually your GitHub org/user name.
+  projectName: 'ontos', // Usually your repo name.
 
   onBrokenLinks: 'throw',
   onBrokenMarkdownLinks: 'throw',
   onDuplicateRoutes: 'throw',
   onBrokenAnchors: 'throw',
-  deploymentBranch: 'gh-pages',
+  //deploymentBranch: 'gh-pages',
   trailingSlash: false,
 
   // Even if you don't use internationalization, you can use this field to set
@@ -69,6 +69,7 @@ const config: Config = {
           exclude: ['dev_guide/api_reference.md', 
             'dev_guide/custom_migrations.md',
             'admin_guide/**',
+            'user_guide/**',
             'getting_started/install_local.md',
             'getting_started/demo_project.md',
             'troubleshooting.md'],

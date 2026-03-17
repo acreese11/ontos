@@ -975,19 +975,13 @@ async def create_data_product(
 
     try:
         logger.info(f"Received raw payload for creation: {payload}")
-        product_id = payload.get('id')
 
-        if product_id and manager.get_product(product_id):
-            raise HTTPException(status_code=409, detail=f"Data product with ID {product_id} already exists.")
-
-        if not product_id:
-            generated_id = str(uuid.uuid4())
-            payload['id'] = generated_id
-            details_for_audit["params"]["generated_product_id"] = generated_id
-            logger.info(f"Generated ID for new product: {payload['id']}")
-
+        # create_product() always generates a UUID for the ID and preserves
+        # any non-UUID original id as a sourceId custom property.
+        # Pre-validate with a placeholder UUID so we return 422 early for bad payloads.
         try:
-            validated_model = DataProduct(**payload)
+            validation_payload = {**payload, 'id': str(uuid.uuid4())}
+            validated_model = DataProduct(**validation_payload)
         except ValidationError as e:
             logger.error(f"Validation failed for payload (ID: {payload.get('id', 'N/A_Validation')}): {e}")
             error_details = e.errors() if hasattr(e, 'errors') else str(e)

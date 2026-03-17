@@ -526,6 +526,7 @@ class SettingsManager:
                 role_name = role_data["name"]
                 
                 if role_name == "Admin":
+                    role_data["is_admin"] = True
                     role_data["assigned_groups"] = role_data.get("assigned_groups") or admin_groups
                     # If YAML provided explicit permissions, honor them; otherwise grant Admin to all features
                     provided_perms = role_data.get("feature_permissions") or {}
@@ -1554,6 +1555,7 @@ class SettingsManager:
             home_sections=home_sections,
             approval_privileges=approval_privileges,
             deployment_policy=deployment_policy,
+            is_admin=getattr(role_db, 'is_admin', False),
             requestable_by_roles=requestable_by_roles,
             approver_roles=approver_roles,
             # created_at=role_db.created_at, # Uncomment if needed

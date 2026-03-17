@@ -1,5 +1,5 @@
 import uuid
-from sqlalchemy import Column, String, Text, Boolean, TIMESTAMP, JSON, UniqueConstraint
+from sqlalchemy import Column, String, Text, Boolean, TIMESTAMP, JSON, ForeignKey, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.sql import func
 
@@ -17,6 +17,11 @@ class ConnectionDb(Base):
     config = Column(JSON, nullable=False, default=dict)
     enabled = Column(Boolean, nullable=False, default=True)
     is_default = Column(Boolean, nullable=False, default=False)
+    system_asset_id = Column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("assets.id", ondelete="SET NULL"),
+        nullable=True,
+    )
 
     created_by = Column(String, nullable=True)
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)

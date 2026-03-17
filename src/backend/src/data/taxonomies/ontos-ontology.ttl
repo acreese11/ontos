@@ -509,6 +509,18 @@ ontos:System a rdfs:Class ;
     ontos:uiDisplayOrder 2 ;
     ontos:uiPersonaVisibility "admin,steward,producer" .
 
+ontos:Catalog a rdfs:Class ;
+    rdfs:subClassOf ontos:Asset ;
+    rdfs:label "Catalog" ;
+    rdfs:comment "Platform-level catalog (UC catalog, BQ project, Snowflake database) that groups schemas" ;
+    skos:example "main, hive_metastore, my-gcp-project" ;
+    skos:definition "Structural container between System and Schema in the platform hierarchy" ;
+    ontos:modelTier "asset" ;
+    ontos:uiIcon "Library" ;
+    ontos:uiCategory "data" ;
+    ontos:uiDisplayOrder 1 ;
+    ontos:uiPersonaVisibility "admin,steward,producer" .
+
 
 # ############################################################################
 #
@@ -579,13 +591,24 @@ ontos:hasDataset a owl:ObjectProperty ;
     ontos:uiDisplayContext "tab" ;
     ontos:isHierarchical true .
 
+ontos:hasCatalog a owl:ObjectProperty ;
+    rdfs:label "has catalog" ;
+    rdfs:comment "Links a system to a catalog/project/database it contains" ;
+    rdfs:domain ontos:System ;
+    rdfs:range ontos:Catalog ;
+    ontos:uiLabel "Catalogs" ;
+    ontos:inverseLabel "System" ;
+    ontos:cardinality "0..*" ;
+    ontos:uiDisplayContext "tab" ;
+    ontos:isHierarchical true .
+
 ontos:hasSchema a owl:ObjectProperty ;
     rdfs:label "has schema" ;
-    rdfs:comment "Links a system to a schema/namespace it contains" ;
-    rdfs:domain ontos:System ;
+    rdfs:comment "Links a system or catalog to a schema/namespace it contains" ;
+    rdfs:domain ontos:System , ontos:Catalog ;
     rdfs:range ontos:Schema ;
     ontos:uiLabel "Schemas" ;
-    ontos:inverseLabel "System" ;
+    ontos:inverseLabel "Catalog" ;
     ontos:cardinality "0..*" ;
     ontos:uiDisplayContext "tab" ;
     ontos:isHierarchical true .

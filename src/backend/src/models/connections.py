@@ -11,6 +11,7 @@ class ConnectionBase(BaseModel):
     config: Dict[str, Any] = Field(default_factory=dict, description="Connector-specific configuration")
     enabled: bool = Field(True, description="Whether this connection is active")
     is_default: bool = Field(False, description="Whether this is the default for its connector type")
+    system_asset_id: Optional[UUID] = Field(None, description="Linked System asset for hierarchy imports")
 
 
 class ConnectionCreate(ConnectionBase):
@@ -23,6 +24,7 @@ class ConnectionUpdate(BaseModel):
     config: Optional[Dict[str, Any]] = None
     enabled: Optional[bool] = None
     is_default: Optional[bool] = None
+    system_asset_id: Optional[UUID] = None
 
 
 class ConnectionResponse(ConnectionBase):

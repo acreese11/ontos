@@ -101,7 +101,7 @@ export default function DqxSchemaSelectDialog({
               <div className="space-y-3">
                 {schemas.map((schema) => {
                   const isSelected = selectedSchemas.has(schema.name)
-                  const columnCount = schema.properties?.length || 0
+                  const columnCount = schema.propertyCount ?? schema.properties?.length ?? 0
 
                   return (
                     <div

@@ -20,5 +20,6 @@ yarn-debug.log*
 yarn-error.log*
 
 .claude
-.venv
+.venv/
+venv/
 .cursor/rules

@@ -13,6 +13,8 @@ import {
   FolderOpen,
   Database,
   Braces,
+  Library,
+  Server,
 } from 'lucide-react';
 import {
   Dialog,
@@ -93,11 +95,13 @@ const assetTypeIconMap: Record<string, typeof Database> = {
   table: Table2,
   view: Eye,
   column: Columns3,
+  catalog: Library,
+  schema: FolderOpen,
   dataset: FolderOpen,
   database: Database,
   'ml model': Box,
   dashboard: Box,
-  system: Braces,
+  system: Server,
 };
 
 function getAssetIcon(assetType: string) {

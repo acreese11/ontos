@@ -8,6 +8,7 @@ from src.models.assets import (
     AssetCreate, AssetUpdate, AssetRead, AssetSummary,
     AssetRelationshipCreate, AssetRelationshipRead,
     PaginatedAssetSummary,
+    DeletePreviewItem, CascadeDeleteRequest, CascadeDeleteResult,
 )
 from src.controller.assets_manager import assets_manager
 from src.common.authorization import PermissionChecker
@@ -261,16 +262,18 @@ def get_all_assets(
     skip: int = 0,
     limit: int = 100,
     asset_type_id: Optional[UUID] = Query(None),
+    asset_type_names: Optional[str] = Query(None, description="Comma-separated asset type names"),
     platform: Optional[str] = Query(None),
     domain_id: Optional[str] = Query(None),
     asset_status: Optional[str] = Query(None, alias="status"),
     name: Optional[str] = Query(None),
 ):
     """Lists all assets with optional filters. Returns paginated results."""
+    type_names_list = [t.strip() for t in asset_type_names.split(",")] if asset_type_names else None
     return manager.get_all_assets(
         db=db, skip=skip, limit=limit,
-        asset_type_id=asset_type_id, platform=platform,
-        domain_id=domain_id, status=asset_status, name=name,
+        asset_type_id=asset_type_id, asset_type_names=type_names_list,
+        platform=platform, domain_id=domain_id, status=asset_status, name=name,
     )
 
 
@@ -335,6 +338,80 @@ def update_asset(
         )
 
 
+@assets_router.get(
+    "/{asset_id}/infer-schema",
+    dependencies=[Depends(PermissionChecker(FEATURE_ID, FeatureAccessLevel.READ_ONLY))],
+)
+def infer_schema_from_asset(
+    asset_id: UUID,
+    db: DBSessionDep,
+    manager=Depends(get_assets_manager),
+):
+    """Extract ODCS-compatible schema objects from an asset and its children."""
+    try:
+        return manager.infer_schema_from_asset(db=db, asset_id=asset_id)
+    except NotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except Exception as e:
+        logger.exception("Failed to infer schema from asset %s", asset_id)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to infer schema from asset")
+
+
+@assets_router.get(
+    "/{asset_id}/delete-preview",
+    response_model=DeletePreviewItem,
+    dependencies=[Depends(PermissionChecker(FEATURE_ID, FeatureAccessLevel.ADMIN))],
+)
+def get_delete_preview(
+    asset_id: UUID,
+    db: DBSessionDep,
+    manager=Depends(get_assets_manager),
+):
+    """Returns a tree of the asset and all hierarchical descendants that would be cascade-deleted."""
+    try:
+        return manager.get_delete_preview(db=db, asset_id=asset_id)
+    except NotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except Exception as e:
+        logger.exception("Failed to build delete preview for asset %s", asset_id)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to build delete preview")
+
+
+@assets_router.post(
+    "/cascade-delete",
+    response_model=CascadeDeleteResult,
+    dependencies=[Depends(PermissionChecker(FEATURE_ID, FeatureAccessLevel.ADMIN))],
+)
+def cascade_delete_assets(
+    body: CascadeDeleteRequest,
+    request: Request,
+    db: DBSessionDep,
+    audit_manager: AuditManagerDep,
+    current_user: AuditCurrentUserDep,
+    manager=Depends(get_assets_manager),
+):
+    """Deletes multiple assets in leaf-first order. Requires Admin."""
+    details = {"params": {"asset_ids": [str(aid) for aid in body.asset_ids]}}
+    try:
+        result = manager.cascade_delete_assets(
+            db=db, asset_ids=body.asset_ids, current_user_id=current_user.email,
+        )
+        details["deleted_count"] = len(result.deleted)
+        details["failed_count"] = len(result.failed)
+        return result
+    except Exception as e:
+        logger.exception("Failed to cascade-delete assets")
+        details["exception"] = {"type": type(e).__name__, "message": str(e)}
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to cascade-delete assets")
+    finally:
+        audit_manager.log_action(
+            db=db, username=current_user.username,
+            ip_address=request.client.host if request.client else None,
+            feature=FEATURE_ID, action="CASCADE_DELETE_ASSETS",
+            success="exception" not in details, details=details,
+        )
+
+
 @assets_router.delete(
     "/{asset_id}",
     response_model=AssetRead,
@@ -352,7 +429,7 @@ def delete_asset(
     success = False
     details = {"params": {"asset_id": str(asset_id)}}
     try:
-        result = manager.delete_asset(db=db, asset_id=asset_id, current_user_id=current_user)
+        result = manager.delete_asset(db=db, asset_id=asset_id, current_user_id=current_user.email)
         success = True
         return result
     except NotFoundError as e:

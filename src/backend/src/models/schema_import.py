@@ -87,3 +87,4 @@ class ImportResult(BaseModel):
     errors: int = 0
     error_messages: List[str] = Field(default_factory=list)
     items: List[ImportResultItem] = Field(default_factory=list)
+    system_asset_id: Optional[UUID] = Field(None, description="ID of the System asset used as hierarchy root")

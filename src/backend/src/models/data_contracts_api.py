@@ -67,6 +67,7 @@ class SchemaObject(BaseModel):
     name: str
     physicalName: Optional[str] = None
     properties: List[ColumnProperty] = Field(default_factory=list)
+    propertyCount: Optional[int] = Field(0, description="Total number of properties (columns) in this schema object")
 
     # ODCS v3.0.2 additional schema object fields
     businessName: Optional[str] = None
@@ -499,6 +500,37 @@ class DataContractRead(BaseModel):
         populate_by_name = True
 
 
+class DataContractSummary(BaseModel):
+    """Lightweight contract model for list endpoints -- no schema, quality, or comments."""
+    id: str
+    name: str
+    version: str
+    status: str
+    published: bool = False
+    owner_team_id: Optional[str] = None
+    owner_team_name: Optional[str] = None
+    project_id: Optional[str] = None
+    project_name: Optional[str] = None
+    kind: str = Field('DataContract')
+    apiVersion: str = Field('v3.0.2', alias='apiVersion')
+    tenant: Optional[str] = None
+    domain: Optional[str] = None
+    domainId: Optional[str] = None
+    dataProduct: Optional[str] = Field(None, alias='data_product')
+    description: Optional[ContractDescription] = None
+    tags: Optional[List[AssignedTag]] = Field(default_factory=list)
+    created: Optional[str] = None
+    updated: Optional[str] = None
+    parentContractId: Optional[str] = Field(None, alias='parent_contract_id')
+    baseName: Optional[str] = Field(None, alias='base_name')
+    changeSummary: Optional[str] = Field(None, alias='change_summary')
+    draftOwnerId: Optional[str] = Field(None, alias='draft_owner_id')
+    schema_object_count: int = Field(0, alias='schemaObjectCount')
+
+    class Config:
+        populate_by_name = True
+
+
 class DataContractCommentCreate(BaseModel):
     message: str
 
@@ -721,3 +753,4 @@ SchemaObject.model_rebuild()
 ODCSContract.model_rebuild()
 DataContractCreate.model_rebuild()
 DataContractRead.model_rebuild()
+DataContractSummary.model_rebuild()

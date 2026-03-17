@@ -80,6 +80,7 @@ class AppRoleBase(BaseModel):
     home_sections: List[HomeSection] = Field(default_factory=list, description="Home sections visible for this role")
     approval_privileges: Dict[ApprovalEntity, bool] = Field(default_factory=dict, description="Entity-level approval capabilities")
     deployment_policy: Optional[DeploymentPolicy] = Field(None, description="Policy for catalog/schema deployment restrictions")
+    is_admin: bool = Field(default=False, description="Whether this role is the admin role")
     # Role hierarchy fields
     requestable_by_roles: List[str] = Field(
         default_factory=list, 
@@ -106,6 +107,7 @@ class AppRoleUpdate(AppRoleBase):
     home_sections: Optional[List[HomeSection]] = None
     approval_privileges: Optional[Dict[ApprovalEntity, bool]] = None
     deployment_policy: Optional[DeploymentPolicy] = None
+    is_admin: Optional[bool] = None
     requestable_by_roles: Optional[List[str]] = None
     approver_roles: Optional[List[str]] = None
 

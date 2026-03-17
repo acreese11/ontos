@@ -6,6 +6,16 @@ from typing import Dict, List, Optional, Any
 import os
 from pathlib import Path
 
+SOURCE_ID_PROPERTY = "sourceId"
+
+
+def _is_valid_uuid(value: str) -> bool:
+    try:
+        uuid.UUID(value)
+        return True
+    except (ValueError, AttributeError):
+        return False
+
 import yaml
 from sqlalchemy.orm import Session
 
@@ -436,7 +446,7 @@ class DataContractsManager(DeliveryMixin, SearchableAsset):
 
     # --- Implementation of SearchableAsset --- 
 
-    def _build_search_index_item(self, contract_db_obj, db) -> Optional[SearchIndexItem]:
+    def _build_search_index_item(self, contract_db_obj, db, preloaded_tags=None) -> Optional[SearchIndexItem]:
         """Build a SearchIndexItem from a contract DB object. Returns None if id or name missing."""
         contract_id = getattr(contract_db_obj, 'id', None)
         name = getattr(contract_db_obj, 'name', None)
@@ -444,7 +454,6 @@ class DataContractsManager(DeliveryMixin, SearchableAsset):
             logger.warning(f"Skipping contract due to missing id or name: {contract_db_obj}")
             return None
 
-        # Build a concise description from available fields
         version = getattr(contract_db_obj, 'version', None)
         status = getattr(contract_db_obj, 'status', None)
         description_usage = getattr(contract_db_obj, 'description_usage', None)
@@ -455,51 +464,38 @@ class DataContractsManager(DeliveryMixin, SearchableAsset):
             desc_parts.append(str(status))
         if description_usage:
             desc_parts.append(str(description_usage))
-        description = " \u2022 ".join([p for p in desc_parts if p])
+        description = " • ".join([p for p in desc_parts if p])
 
-        # Collect tags from BOTH sources:
-        # 1. Legacy ODCS tags (DataContractTagDb) - from imported contracts
-        # 2. Unified tag system (EntityTagAssociationDb) - app-assigned tags
         tag_names: List[str] = []
-        
-        # 1. Legacy ODCS tags from contract import
+
+        # 1. Legacy ODCS tags (DataContractTagDb) -- still uses selectin, lightweight
         try:
             if getattr(contract_db_obj, 'tags', None):
                 for t in contract_db_obj.tags:
-                    # DataContractTagDb has simple 'name' field for ODCS tags
                     if getattr(t, 'name', None):
                         tag_names.append(t.name)
         except Exception:
             pass
-        
-        # 2. Unified tag system (EntityTagAssociationDb)
-        try:
-            from src.repositories.tags_repository import entity_tag_repo
-            assigned_tags = entity_tag_repo.get_assigned_tags_for_entity(
-                db=db,
-                entity_id=str(contract_id),
-                entity_type="data_contract"
-            )
-            for tag in assigned_tags:
+
+        # 2. Unified tag system -- use preloaded batch when available
+        if preloaded_tags is not None:
+            for tag in preloaded_tags:
                 if hasattr(tag, 'fully_qualified_name') and tag.fully_qualified_name:
                     tag_names.append(tag.fully_qualified_name)
-        except Exception as tag_err:
-            logger.debug(f"Could not load unified tags for contract {contract_id}: {tag_err}")
+        else:
+            try:
+                from src.repositories.tags_repository import entity_tag_repo
+                assigned_tags = entity_tag_repo.get_assigned_tags_for_entity(
+                    db=db, entity_id=str(contract_id), entity_type="data_contract"
+                )
+                for tag in assigned_tags:
+                    if hasattr(tag, 'fully_qualified_name') and tag.fully_qualified_name:
+                        tag_names.append(tag.fully_qualified_name)
+            except Exception as tag_err:
+                logger.debug(f"Could not load unified tags for contract {contract_id}: {tag_err}")
 
-        # Build extra_data for configurable search fields
         owner = ""
-        try:
-            if getattr(contract_db_obj, 'owner_team', None) and getattr(contract_db_obj.owner_team, 'name', None):
-                owner = contract_db_obj.owner_team.name
-        except Exception:
-            pass
-
         domain = ""
-        try:
-            if getattr(contract_db_obj, 'domain', None) and getattr(contract_db_obj.domain, 'name', None):
-                domain = contract_db_obj.domain.name
-        except Exception:
-            pass
 
         extra_data = {
             "version": str(version) if version else "",
@@ -536,10 +532,21 @@ class DataContractsManager(DeliveryMixin, SearchableAsset):
                 return []
 
             with session_factory() as db:
-                # Fetch a generous number; adjust if needed
                 contracts_db = data_contract_repo.get_multi(db=db, limit=10000)
+
+                # Batch-load unified tags for all contracts at once (avoids N+1)
+                contract_ids = [str(c.id) for c in contracts_db]
+                batch_tags: dict = {}
+                try:
+                    from src.repositories.tags_repository import entity_tag_repo
+                    batch_tags = entity_tag_repo.get_assigned_tags_for_entities(
+                        db, entity_ids=contract_ids, entity_type="data_contract"
+                    )
+                except Exception as e:
+                    logger.debug(f"Batch tag loading for search index failed: {e}")
+
                 for contract_db in contracts_db:
-                    item = self._build_search_index_item(contract_db, db)
+                    item = self._build_search_index_item(contract_db, db, preloaded_tags=batch_tags.get(str(contract_db.id), []))
                     if item:
                         items.append(item)
 
@@ -547,7 +554,7 @@ class DataContractsManager(DeliveryMixin, SearchableAsset):
             return items
         except Exception as e:
             logger.error(f"Error fetching or mapping data contracts for search: {e}", exc_info=True)
-            return [] # Return empty list on error
+            return []
 
     # --- ODCS Helpers ---
     def create_from_odcs_dict(self, db, odcs: Dict[str, Any], current_username: Optional[str]) -> DataContractDb:
@@ -1589,24 +1596,25 @@ class DataContractsManager(DeliveryMixin, SearchableAsset):
     
     def _create_schema_objects(self, db, contract_id: str, schema_data: List, current_user: Optional[str] = None):
         """
-        Create schema objects and properties for a contract.
+        Create schema objects and properties for a contract using bulk inserts.
         
-        Args:
-            db: Database session
-            contract_id: Contract UUID
-            schema_data: List of schema object data (can be Pydantic models or dicts)
-            current_user: Username for semantic link creation
+        Assigns UUIDs in Python to avoid per-row db.flush() round-trips.
         """
+        all_schema_objs = []
+        all_properties = []
+        # Collect semantic link work to process after bulk insert
+        schema_semantic_work = []
+        prop_semantic_work = []
+
         for schema_obj_data in schema_data:
-            # Support both Pydantic models and dicts
             if hasattr(schema_obj_data, 'model_dump'):
                 schema_dict = schema_obj_data.model_dump()
-                schema_obj_model = schema_obj_data
             else:
                 schema_dict = schema_obj_data
-                schema_obj_model = None
-            
+
+            schema_obj_id = str(uuid4())
             schema_obj = SchemaObjectDb(
+                id=schema_obj_id,
                 contract_id=contract_id,
                 name=schema_dict.get('name', 'table'),
                 physical_name=schema_dict.get('physicalName') or schema_dict.get('physical_name'),
@@ -1617,112 +1625,99 @@ class DataContractsManager(DeliveryMixin, SearchableAsset):
                 description=schema_dict.get('description'),
                 tags=json.dumps(schema_dict.get('tags', [])) if schema_dict.get('tags') else None
             )
-            db.add(schema_obj)
-            db.flush()  # Get ID for properties
-            
-            # Add properties
-            properties = schema_dict.get('properties', [])
-            if properties:
-                for prop_data in properties:
-                    if hasattr(prop_data, 'model_dump'):
-                        prop_dict = prop_data.model_dump()
-                        prop_model = prop_data
-                    else:
-                        prop_dict = prop_data
-                        prop_model = None
-                    
-                    # Build logical type options JSON from type-specific constraints
-                    logical_type_options = {}
-                    
-                    # String constraints
-                    for field in ['minLength', 'maxLength', 'pattern']:
-                        if prop_dict.get(field) is not None:
-                            logical_type_options[field] = prop_dict[field]
-                    
-                    # Number/Integer constraints
-                    for field in ['minimum', 'maximum', 'multipleOf', 'precision', 'exclusiveMinimum', 'exclusiveMaximum']:
-                        if prop_dict.get(field) is not None:
-                            logical_type_options[field] = prop_dict[field]
-                    
-                    # Date constraints
-                    for field in ['format', 'timezone', 'customFormat']:
-                        if prop_dict.get(field) is not None:
-                            logical_type_options[field] = prop_dict[field]
-                    
-                    # Array constraints
-                    for field in ['itemType', 'minItems', 'maxItems']:
-                        if prop_dict.get(field) is not None:
-                            logical_type_options[field] = prop_dict[field]
-                    
-                    # Handle examples as JSON string
-                    examples_json = None
-                    if prop_dict.get('examples'):
-                        if isinstance(prop_dict['examples'], list):
-                            examples_json = json.dumps(prop_dict['examples'])
-                        else:
-                            examples_json = str(prop_dict['examples'])
-                    
-                    # Handle transformSourceObjects as JSON string
-                    transform_source_objects_json = None
-                    if prop_dict.get('transformSourceObjects'):
-                        if isinstance(prop_dict['transformSourceObjects'], list):
-                            transform_source_objects_json = json.dumps(prop_dict['transformSourceObjects'])
-                        else:
-                            transform_source_objects_json = str(prop_dict['transformSourceObjects'])
-                    
-                    prop = SchemaPropertyDb(
-                        object_id=schema_obj.id,
-                        name=prop_dict.get('name', 'column'),
-                        logical_type=prop_dict.get('logicalType') or prop_dict.get('logical_type', 'string'),
-                        physical_type=prop_dict.get('physicalType') or prop_dict.get('physical_type'),
-                        required=prop_dict.get('required', False),
-                        unique=prop_dict.get('unique', False),
-                        partitioned=prop_dict.get('partitioned', False),
-                        primary_key_position=prop_dict.get('primaryKeyPosition', -1) if prop_dict.get('primaryKey') else -1,
-                        partition_key_position=prop_dict.get('partitionKeyPosition', -1) if prop_dict.get('partitioned') else -1,
-                        classification=prop_dict.get('classification'),
-                        encrypted_name=prop_dict.get('encryptedName'),
-                        transform_logic=prop_dict.get('transformLogic'),
-                        transform_source_objects=transform_source_objects_json,
-                        transform_description=prop_dict.get('description'),
-                        examples=examples_json,
-                        critical_data_element=prop_dict.get('criticalDataElement', False),
-                        logical_type_options_json=json.dumps(logical_type_options) if logical_type_options else None,
-                        items_logical_type=prop_dict.get('itemType'),
-                        business_name=prop_dict.get('businessName')
-                    )
-                    db.add(prop)
-                    db.flush()
-                    
-                    # Handle property-level semantic links if available
-                    prop_auth_defs = prop_dict.get('authoritativeDefinitions', [])
-                    if prop_auth_defs and current_user:
-                        from src.controller.semantic_links_manager import SemanticLinksManager
-                        from src.utils.semantic_helpers import process_property_semantic_links
-                        semantic_manager = SemanticLinksManager(db)
-                        process_property_semantic_links(
-                            semantic_manager=semantic_manager,
-                            contract_id=contract_id,
-                            schema_name=schema_dict.get('name', 'table'),
-                            property_name=prop_dict.get('name', 'column'),
-                            authoritative_definitions=prop_auth_defs,
-                            created_by=current_user
-                        )
-            
-            # Handle schema-level semantic links if available
+            all_schema_objs.append(schema_obj)
+
+            # Collect schema-level semantic link work
             schema_auth_defs = schema_dict.get('authoritativeDefinitions', [])
             if schema_auth_defs and current_user:
-                from src.controller.semantic_links_manager import SemanticLinksManager
-                from src.utils.semantic_helpers import process_schema_semantic_links
-                semantic_manager = SemanticLinksManager(db)
+                schema_semantic_work.append((contract_id, schema_dict.get('name', 'table'), schema_auth_defs))
+
+            properties = schema_dict.get('properties', [])
+
+            for prop_data in (properties or []):
+                if hasattr(prop_data, 'model_dump'):
+                    prop_dict = prop_data.model_dump()
+                else:
+                    prop_dict = prop_data
+
+                logical_type_options = {}
+                for field in ['minLength', 'maxLength', 'pattern']:
+                    if prop_dict.get(field) is not None:
+                        logical_type_options[field] = prop_dict[field]
+                for field in ['minimum', 'maximum', 'multipleOf', 'precision', 'exclusiveMinimum', 'exclusiveMaximum']:
+                    if prop_dict.get(field) is not None:
+                        logical_type_options[field] = prop_dict[field]
+                for field in ['format', 'timezone', 'customFormat']:
+                    if prop_dict.get(field) is not None:
+                        logical_type_options[field] = prop_dict[field]
+                for field in ['itemType', 'minItems', 'maxItems']:
+                    if prop_dict.get(field) is not None:
+                        logical_type_options[field] = prop_dict[field]
+
+                examples_json = None
+                if prop_dict.get('examples'):
+                    examples_json = json.dumps(prop_dict['examples']) if isinstance(prop_dict['examples'], list) else str(prop_dict['examples'])
+
+                transform_source_objects_json = None
+                if prop_dict.get('transformSourceObjects'):
+                    transform_source_objects_json = json.dumps(prop_dict['transformSourceObjects']) if isinstance(prop_dict['transformSourceObjects'], list) else str(prop_dict['transformSourceObjects'])
+
+                prop = SchemaPropertyDb(
+                    id=str(uuid4()),
+                    object_id=schema_obj_id,
+                    name=prop_dict.get('name', 'column'),
+                    logical_type=prop_dict.get('logicalType') or prop_dict.get('logical_type', 'string'),
+                    physical_type=prop_dict.get('physicalType') or prop_dict.get('physical_type'),
+                    required=prop_dict.get('required', False),
+                    unique=prop_dict.get('unique', False),
+                    partitioned=prop_dict.get('partitioned', False),
+                    primary_key_position=prop_dict.get('primaryKeyPosition', -1) if prop_dict.get('primaryKey') else -1,
+                    partition_key_position=prop_dict.get('partitionKeyPosition', -1) if prop_dict.get('partitioned') else -1,
+                    classification=prop_dict.get('classification'),
+                    encrypted_name=prop_dict.get('encryptedName'),
+                    transform_logic=prop_dict.get('transformLogic'),
+                    transform_source_objects=transform_source_objects_json,
+                    transform_description=prop_dict.get('description'),
+                    examples=examples_json,
+                    critical_data_element=prop_dict.get('criticalDataElement', False),
+                    logical_type_options_json=json.dumps(logical_type_options) if logical_type_options else None,
+                    items_logical_type=prop_dict.get('itemType'),
+                    business_name=prop_dict.get('businessName')
+                )
+                all_properties.append(prop)
+
+                prop_auth_defs = prop_dict.get('authoritativeDefinitions', [])
+                if prop_auth_defs and current_user:
+                    prop_semantic_work.append((contract_id, schema_dict.get('name', 'table'), prop_dict.get('name', 'column'), prop_auth_defs))
+
+        # Bulk add all schema objects and properties in one flush
+        db.add_all(all_schema_objs)
+        db.add_all(all_properties)
+        db.flush()
+
+        # Process semantic links after bulk insert
+        if schema_semantic_work or prop_semantic_work:
+            from src.controller.semantic_links_manager import SemanticLinksManager
+            from src.utils.semantic_helpers import process_schema_semantic_links, process_property_semantic_links
+            semantic_manager = SemanticLinksManager(db)
+            for cid, sname, auth_defs in schema_semantic_work:
                 process_schema_semantic_links(
                     semantic_manager=semantic_manager,
-                    contract_id=contract_id,
-                    schema_name=schema_dict.get('name', 'table'),
-                    authoritative_definitions=schema_auth_defs,
+                    contract_id=cid,
+                    schema_name=sname,
+                    authoritative_definitions=auth_defs,
                     created_by=current_user
                 )
-    
+            for cid, sname, pname, auth_defs in prop_semantic_work:
+                process_property_semantic_links(
+                    semantic_manager=semantic_manager,
+                    contract_id=cid,
+                    schema_name=sname,
+                    property_name=pname,
+                    authoritative_definitions=auth_defs,
+                    created_by=current_user
+                )
+
     def _create_quality_checks(self, db, contract_id: str, quality_rules: List):
         """
         Create quality checks for a contract.
@@ -1832,8 +1827,12 @@ class DataContractsManager(DeliveryMixin, SearchableAsset):
                 continue
             channel_db = DataContractSupportDb(
                 contract_id=contract_id,
-                type=support_item.get('type', 'email'),
-                channel=support_item.get('channel')
+                channel=support_item.get('channel', ''),
+                url=support_item.get('url', ''),
+                description=support_item.get('description'),
+                tool=support_item.get('tool'),
+                scope=support_item.get('scope'),
+                invitation_url=support_item.get('invitationUrl'),
             )
             db.add(channel_db)
     
@@ -1979,11 +1978,25 @@ class DataContractsManager(DeliveryMixin, SearchableAsset):
             role_db = DataContractRoleDb(
                 contract_id=contract_id,
                 role=role_data.get('role'),
+                description=role_data.get('description'),
                 access=role_data.get('access'),
-                first_contacted=role_data.get('firstContacted'),
-                response_time=role_data.get('responseTime')
+                first_level_approvers=role_data.get('firstLevelApprovers'),
+                second_level_approvers=role_data.get('secondLevelApprovers'),
             )
             db.add(role_db)
+            db.flush()
+
+            role_custom_props = role_data.get('customProperties', [])
+            if isinstance(role_custom_props, list):
+                for cp in role_custom_props:
+                    if isinstance(cp, dict) and cp.get('property'):
+                        from src.db_models.data_contracts import DataContractRolePropertyDb
+                        prop_db = DataContractRolePropertyDb(
+                            role_id=role_db.id,
+                            property=cp['property'],
+                            value=str(cp['value']) if cp.get('value') is not None else None,
+                        )
+                        db.add(prop_db)
     
     def _create_legacy_quality_rules(self, db, contract_id: str, quality_rules_data: List[dict]):
         """Create top-level quality rules (legacy ODCS format)."""
@@ -2599,19 +2612,18 @@ class DataContractsManager(DeliveryMixin, SearchableAsset):
             # Try to resolve owner as team name
             owner_team_id = self._resolve_team_name_to_id(db, owner_val)
             
-            # Check if ID is provided and not taken
-            provided_id = parsed_odcs.get('id')
-            if provided_id:
-                try:
-                    existing = data_contract_repo.get(db, id=provided_id)
-                    if existing:
-                        provided_id = None
-                except Exception:
-                    provided_id = None
-            
-            # Create main contract record
+            # Preserve original external ID (e.g. URN) as a custom property
+            original_id = parsed_odcs.get('id')
+            if original_id and isinstance(original_id, str) and not _is_valid_uuid(original_id):
+                custom_props = parsed_odcs.get('customProperties') or parsed_odcs.get('custom_properties') or []
+                if isinstance(custom_props, list):
+                    custom_props.append({"property": SOURCE_ID_PROPERTY, "value": original_id})
+                elif isinstance(custom_props, dict):
+                    custom_props[SOURCE_ID_PROPERTY] = original_id
+                parsed_odcs['customProperties'] = custom_props
+
+            # Create main contract record (always use auto-generated UUID)
             db_obj = DataContractDb(
-                id=provided_id if provided_id else None,
                 name=name_val,
                 version=version_val,
                 status=status_val,
@@ -2633,7 +2645,8 @@ class DataContractsManager(DeliveryMixin, SearchableAsset):
             created = data_contract_repo.create(db=db, obj_in=db_obj)
             
             # Parse and create schema objects if present
-            schema_data = parsed_odcs.get('schema', [])
+            # Accept both ODCS standard 'schema' and Pydantic field name 'contract_schema'
+            schema_data = parsed_odcs.get('schema') or parsed_odcs.get('contract_schema', [])
             if isinstance(schema_data, list) and schema_data:
                 self._create_schema_objects(db, created.id, schema_data, current_user)
             
@@ -5628,7 +5641,37 @@ class DataContractsManager(DeliveryMixin, SearchableAsset):
         return result
 
     # --- Contract Listing and API Model Building ---
-    
+
+    def _query_contracts(self, db, domain_id=None, project_id=None, is_admin=False, latest_only=True):
+        """Shared query logic for listing contracts. Returns list of DataContractDb."""
+        if domain_id:
+            query = db.query(DataContractDb).filter(DataContractDb.domain_id == domain_id)
+            if not is_admin and project_id:
+                logger.debug(f"Filtering contracts by project_id: {project_id} and domain_id: {domain_id}")
+                query = query.filter(
+                    (DataContractDb.project_id == project_id) |
+                    (DataContractDb.project_id.is_(None))
+                )
+            contracts = query.limit(500).all()
+        else:
+            contracts = data_contract_repo.get_multi(
+                db,
+                project_id=project_id,
+                is_admin=is_admin
+            )
+
+        if latest_only:
+            original_count = len(contracts)
+            seen_base_names: dict = {}
+            for c in contracts:
+                key = c.base_name or c.name
+                if key not in seen_base_names or c.created_at > seen_base_names[key].created_at:
+                    seen_base_names[key] = c
+            contracts = list(seen_base_names.values())
+            logger.debug(f"Filtered from {original_count} to {len(contracts)} latest versions (grouped by base_name)")
+
+        return contracts
+
     def list_contracts_from_db(
         self,
         db,
@@ -5637,54 +5680,120 @@ class DataContractsManager(DeliveryMixin, SearchableAsset):
         is_admin: bool = False,
         latest_only: bool = True
     ):
-        """List data contracts from database with optional filtering.
+        """List data contracts as lightweight summaries (no schema/quality/comments)."""
+        contracts = self._query_contracts(db, domain_id, project_id, is_admin, latest_only)
+        return self._build_contract_summaries(db, contracts)
 
-        Args:
-            db: Database session
-            domain_id: Optional domain ID filter
-            project_id: Optional project ID filter (ignored if is_admin=True)
-            is_admin: If True, return all contracts regardless of project_id
-            latest_only: If True, return only the latest version per contract family (grouped by base_name)
+    def _build_contract_summaries(self, db, contracts):
+        """Build lightweight summary models for a list of contracts with batched lookups."""
+        from src.models.data_contracts_api import ContractDescription, DataContractSummary
+        from src.repositories.data_domain_repository import data_domain_repo
+        from src.repositories.tags_repository import entity_tag_repo
+        from sqlalchemy import func as sa_func
 
-        Returns:
-            List of DataContractRead API models
-        """
-        if domain_id:
-            # Filter by domain ID (and project if provided)
-            query = db.query(DataContractDb).filter(DataContractDb.domain_id == domain_id)
+        if not contracts:
+            return []
 
-            # Apply project filtering only if not admin and project_id is provided
-            if not is_admin and project_id:
-                logger.debug(f"Filtering contracts by project_id: {project_id} and domain_id: {domain_id}")
-                query = query.filter(
-                    (DataContractDb.project_id == project_id) |
-                    (DataContractDb.project_id.is_(None))
+        # Batch-resolve domain names
+        domain_ids = {c.domain_id for c in contracts if c.domain_id}
+        domain_map = {}
+        if domain_ids:
+            try:
+                from src.db_models.data_domains import DataDomainDb
+                rows = db.query(DataDomainDb.id, DataDomainDb.name).filter(DataDomainDb.id.in_(domain_ids)).all()
+                domain_map = {str(r.id): r.name for r in rows}
+            except Exception as e:
+                logger.debug(f"Batch domain resolution failed: {e}")
+
+        # Batch-resolve team names
+        team_ids = {c.owner_team_id for c in contracts if c.owner_team_id}
+        team_map = {}
+        if team_ids:
+            try:
+                from src.db_models.teams import TeamDb
+                rows = db.query(TeamDb.id, TeamDb.name).filter(TeamDb.id.in_(team_ids)).all()
+                team_map = {str(r.id): r.name for r in rows}
+            except Exception as e:
+                logger.debug(f"Batch team resolution failed: {e}")
+
+        # Batch-resolve project names
+        project_ids = {c.project_id for c in contracts if c.project_id}
+        project_map = {}
+        if project_ids:
+            try:
+                from src.db_models.projects import ProjectDb
+                rows = db.query(ProjectDb.id, ProjectDb.name).filter(ProjectDb.id.in_(project_ids)).all()
+                project_map = {str(r.id): r.name for r in rows}
+            except Exception as e:
+                logger.debug(f"Batch project resolution failed: {e}")
+
+        # Batch count schema objects per contract
+        contract_ids = [c.id for c in contracts]
+        schema_counts = {}
+        try:
+            from src.db_models.data_contracts import SchemaObjectDb
+            rows = (
+                db.query(SchemaObjectDb.contract_id, sa_func.count(SchemaObjectDb.id))
+                .filter(SchemaObjectDb.contract_id.in_(contract_ids))
+                .group_by(SchemaObjectDb.contract_id)
+                .all()
+            )
+            schema_counts = {r[0]: r[1] for r in rows}
+        except Exception as e:
+            logger.debug(f"Batch schema count failed: {e}")
+
+        # Batch-load tags for all contracts
+        tags_map: dict = {}
+        try:
+            all_tags = entity_tag_repo.get_assigned_tags_for_entities(
+                db,
+                entity_ids=contract_ids,
+                entity_type="data_contract"
+            )
+            tags_map = all_tags
+        except Exception:
+            # Fallback: per-contract tag loading
+            for cid in contract_ids:
+                try:
+                    tags_map[cid] = entity_tag_repo.get_assigned_tags_for_entity(
+                        db, entity_id=cid, entity_type="data_contract"
+                    )
+                except Exception:
+                    tags_map[cid] = []
+
+        results = []
+        for c in contracts:
+            description = None
+            if c.description_usage or c.description_purpose or c.description_limitations:
+                description = ContractDescription(
+                    usage=c.description_usage,
+                    purpose=c.description_purpose,
+                    limitations=c.description_limitations
                 )
 
-            contracts = query.all()
-        else:
-            # Get contracts with project filtering
-            contracts = data_contract_repo.get_multi(
-                db,
-                project_id=project_id,
-                is_admin=is_admin
-            )
-
-        # Filter to latest version per contract family if requested
-        if latest_only:
-            # Group by base_name (or name if base_name is null for legacy contracts)
-            # and keep only the contract with the highest created_at per group
-            original_count = len(contracts)
-            seen_base_names: dict = {}
-            for c in contracts:
-                key = c.base_name or c.name  # Fallback for legacy contracts without base_name
-                if key not in seen_base_names or c.created_at > seen_base_names[key].created_at:
-                    seen_base_names[key] = c
-            contracts = list(seen_base_names.values())
-            logger.info(f"Filtered from {original_count} to {len(contracts)} latest versions (grouped by base_name)")
-
-        # Build API models for each contract
-        return [self._build_contract_api_model(db, c) for c in contracts]
+            results.append(DataContractSummary(
+                id=c.id,
+                name=c.name,
+                version=c.version,
+                status=c.status,
+                published=c.published if hasattr(c, 'published') else False,
+                owner_team_id=c.owner_team_id,
+                owner_team_name=team_map.get(c.owner_team_id),
+                project_id=c.project_id,
+                project_name=project_map.get(c.project_id) if c.project_id else None,
+                kind=c.kind,
+                apiVersion=c.api_version,
+                tenant=c.tenant,
+                domain=domain_map.get(c.domain_id) if c.domain_id else None,
+                domainId=c.domain_id,
+                dataProduct=c.data_product,
+                description=description,
+                tags=tags_map.get(c.id, []),
+                created=c.created_at.isoformat() if c.created_at else None,
+                updated=c.updated_at.isoformat() if c.updated_at else None,
+                schemaObjectCount=schema_counts.get(c.id, 0),
+            ))
+        return results
     
     def _build_contract_api_model(self, db, db_contract) -> 'DataContractRead':
         """Build DataContractRead API model from normalized database models.
@@ -5709,9 +5818,9 @@ class DataContractsManager(DeliveryMixin, SearchableAsset):
         from src.repositories.tags_repository import entity_tag_repo
         
         # Resolve domain name from domain_id if available
-        logger.info(f"[BUILD API] db_contract.domain_id = {db_contract.domain_id}")
-        logger.info(f"[BUILD API] db_contract.project_id = {db_contract.project_id}")
-        logger.info(f"[BUILD API] db_contract.owner_team_id = {db_contract.owner_team_id}")
+        logger.debug(f"[BUILD API] db_contract.domain_id = {db_contract.domain_id}")
+        logger.debug(f"[BUILD API] db_contract.project_id = {db_contract.project_id}")
+        logger.debug(f"[BUILD API] db_contract.owner_team_id = {db_contract.owner_team_id}")
         
         domain_name = None
         if db_contract.domain_id:
@@ -5731,54 +5840,29 @@ class DataContractsManager(DeliveryMixin, SearchableAsset):
                 limitations=db_contract.description_limitations
             )
         
-        # Build schema objects
+        # Build schema objects -- metadata only, no properties (loaded on-demand via /schemas/{name}/properties)
         schema_objects = []
-        for schema_obj in db_contract.schema_objects:
-            properties = []
-            for prop in schema_obj.properties:
-                # Parse logical type options if available
-                options = {}
-                if prop.logical_type_options_json:
-                    try:
-                        options = json.loads(prop.logical_type_options_json)
-                    except:
-                        pass
-                
-                prop_dict = {
-                    'name': prop.name,
-                    'logicalType': prop.logical_type or 'string',
-                    'required': prop.required,
-                    'unique': prop.unique,
-                    'description': prop.transform_description,
-                    'primaryKeyPosition': prop.primary_key_position,
-                    'partitionKeyPosition': prop.partition_key_position,
-                }
-                
-                # Add logical type options to property
-                prop_dict.update(options)
-                
-                # Add property-level authoritative definitions
-                if hasattr(prop, 'authoritative_definitions') and prop.authoritative_definitions:
-                    prop_dict['authoritativeDefinitions'] = [
-                        {'url': ad.url, 'type': ad.type}
-                        for ad in prop.authoritative_definitions
-                    ]
-                
-                properties.append(ColumnProperty(**prop_dict))
-            
-            # Build schema-level authoritative definitions
-            schema_auth_defs = []
-            if hasattr(schema_obj, 'authoritative_definitions') and schema_obj.authoritative_definitions:
-                schema_auth_defs = [
-                    {'url': ad.url, 'type': ad.type}
-                    for ad in schema_obj.authoritative_definitions
-                ]
-            
+        from sqlalchemy import func as sa_func
+        schema_rows = (
+            db.query(SchemaObjectDb.id, SchemaObjectDb.name, SchemaObjectDb.physical_name,
+                     SchemaObjectDb.business_name, SchemaObjectDb.physical_type,
+                     SchemaObjectDb.description,
+                     sa_func.count(SchemaPropertyDb.id).label("prop_count"))
+            .outerjoin(SchemaPropertyDb, SchemaPropertyDb.object_id == SchemaObjectDb.id)
+            .filter(SchemaObjectDb.contract_id == db_contract.id)
+            .group_by(SchemaObjectDb.id)
+            .order_by(SchemaObjectDb.name)
+            .all()
+        )
+        for row in schema_rows:
             schema_objects.append(SchemaObject(
-                name=schema_obj.name,
-                physicalName=schema_obj.physical_name,
-                properties=properties,
-                authoritativeDefinitions=schema_auth_defs
+                name=row.name,
+                physicalName=row.physical_name,
+                businessName=row.business_name,
+                physicalType=row.physical_type,
+                description=row.description,
+                properties=[],
+                propertyCount=row.prop_count,
             ))
         
         # Build team (ODCS v3.0.2 compliant)
@@ -5862,38 +5946,42 @@ class DataContractsManager(DeliveryMixin, SearchableAsset):
                     type=auth_def.type
                 ))
         
-        # Quality rules
+        # Quality rules -- direct query avoids loading all schema_objects + properties
         quality_rules = []
-        if hasattr(db_contract, 'schema_objects') and db_contract.schema_objects:
-            for schema_obj in db_contract.schema_objects:
-                if hasattr(schema_obj, 'quality_checks') and schema_obj.quality_checks:
-                    for check in schema_obj.quality_checks:
-                        quality_rules.append(QualityRule(
-                            name=check.name,
-                            description=check.description,
-                            level=check.level,
-                            dimension=check.dimension,
-                            business_impact=check.business_impact,
-                            severity=check.severity,
-                            type=check.type,
-                            method=check.method,
-                            schedule=check.schedule,
-                            scheduler=check.scheduler,
-                            unit=check.unit,
-                            tags=check.tags,
-                            rule=check.rule,
-                            query=check.query,
-                            engine=check.engine,
-                            implementation=check.implementation,
-                            must_be=check.must_be,
-                            must_not_be=check.must_not_be,
-                            must_be_gt=check.must_be_gt,
-                            must_be_ge=check.must_be_ge,
-                            must_be_lt=check.must_be_lt,
-                            must_be_le=check.must_be_le,
-                            must_be_between_min=check.must_be_between_min,
-                            must_be_between_max=check.must_be_between_max
-                        ))
+        from src.db_models.data_contracts import DataQualityCheckDb
+        checks = (
+            db.query(DataQualityCheckDb)
+            .join(SchemaObjectDb, DataQualityCheckDb.object_id == SchemaObjectDb.id)
+            .filter(SchemaObjectDb.contract_id == db_contract.id)
+            .all()
+        )
+        for check in checks:
+            quality_rules.append(QualityRule(
+                name=check.name,
+                description=check.description,
+                level=check.level,
+                dimension=check.dimension,
+                business_impact=check.business_impact,
+                severity=check.severity,
+                type=check.type,
+                method=check.method,
+                schedule=check.schedule,
+                scheduler=check.scheduler,
+                unit=check.unit,
+                tags=check.tags,
+                rule=check.rule,
+                query=check.query,
+                engine=check.engine,
+                implementation=check.implementation,
+                must_be=check.must_be,
+                must_not_be=check.must_not_be,
+                must_be_gt=check.must_be_gt,
+                must_be_ge=check.must_be_ge,
+                must_be_lt=check.must_be_lt,
+                must_be_le=check.must_be_le,
+                must_be_between_min=check.must_be_between_min,
+                must_be_between_max=check.must_be_between_max
+            ))
         
         # Load tags for the contract
         tags = []
@@ -5929,7 +6017,7 @@ class DataContractsManager(DeliveryMixin, SearchableAsset):
                 logger.debug(f"Could not resolve project: {e}")
         
         logger.debug(f"Building API model for contract {db_contract.id}")
-        
+
         return DataContractRead(
             id=db_contract.id,
             name=db_contract.name,

@@ -92,7 +92,10 @@ function PortLinkedAssets({ portId, portName, canEdit }: { portId: string; portN
       const res = await fetch(`/api/entities/OutputPort/${portId}/relationships`);
       if (!res.ok) return;
       const data = await res.json();
-      setRelationships(data || []);
+      const rels = Array.isArray(data)
+        ? data
+        : [...(data.outgoing || []), ...(data.incoming || [])];
+      setRelationships(rels);
     } catch {
       // Silently fail for non-critical display
     } finally {
@@ -271,10 +274,10 @@ export default function DataProductDetails() {
   // Products with status 'active' and above must be cloned for editing
   const canEditInPlace = product?.status && ['draft', 'sandbox', 'proposed', 'under_review', 'approved'].includes(product.status.toLowerCase());
   const isPersonalDraft = product?.draftOwnerId != null;
-  const isReadOnly = !canEditInPlace && !isPersonalDraft;
+  const isReadOnly = !canAdmin && !canEditInPlace && !isPersonalDraft;
 
-  // Combined permission check: can write AND can edit in place (or is personal draft)
-  const canModify = canWrite && (canEditInPlace || isPersonalDraft);
+  // Combined permission check: admin can always edit; others need write + editable status
+  const canModify = canAdmin || (canWrite && (canEditInPlace || isPersonalDraft));
 
   useCopilotContext(
     'Data Product Details',

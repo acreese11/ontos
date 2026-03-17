@@ -271,7 +271,7 @@ class DatabricksConnector(AssetConnector):
             results.append(AssetInfo(
                 identifier=catalog.name,
                 name=catalog.name,
-                asset_type=UnifiedAssetType.GENERIC,  # Catalogs are containers
+                asset_type=UnifiedAssetType.UC_CATALOG,
                 connector_type=self.connector_type,
                 description=catalog.comment,
                 path=catalog.name,
@@ -306,7 +306,7 @@ class DatabricksConnector(AssetConnector):
                 results.append(AssetInfo(
                     identifier=f"{catalog}.{schema.name}",
                     name=schema.name,
-                    asset_type=UnifiedAssetType.GENERIC,  # Schemas are containers
+                    asset_type=UnifiedAssetType.UC_SCHEMA,
                     connector_type=self.connector_type,
                     description=schema.comment,
                     path=f"{catalog}.{schema.name}",
@@ -524,32 +524,37 @@ class DatabricksConnector(AssetConnector):
         Get detailed metadata for an asset.
         
         The identifier should be a fully qualified name (catalog.schema.name).
+        Single-part identifiers are treated as catalogs, two-part as schemas.
         """
         ws = self._ensure_client()
         
-        parsed = self._parse_identifier(identifier)
-        if not parsed["name"]:
-            logger.warning(f"Invalid identifier: {identifier}")
+        parts = identifier.split(".") if identifier else []
+
+        if len(parts) == 0:
             return None
-        
-        # Try to find the asset by checking different types
+
         try:
-            # Try as table/view first (most common)
+            # Single part -> catalog
+            if len(parts) == 1:
+                return self._get_catalog_metadata(ws, identifier)
+
+            # Two parts -> schema
+            if len(parts) == 2:
+                return self._get_schema_metadata(ws, parts[0], parts[1])
+
+            # Three+ parts -> leaf asset
             metadata = self._get_table_metadata(ws, identifier)
             if metadata:
                 return metadata
             
-            # Try as function
             metadata = self._get_function_metadata(ws, identifier)
             if metadata:
                 return metadata
             
-            # Try as model
             metadata = self._get_model_metadata(ws, identifier)
             if metadata:
                 return metadata
             
-            # Try as volume
             metadata = self._get_volume_metadata(ws, identifier)
             if metadata:
                 return metadata
@@ -562,6 +567,60 @@ class DatabricksConnector(AssetConnector):
             raise ConnectorPermissionError(str(e), self.connector_type)
         except DatabricksError as e:
             logger.error(f"Databricks error getting metadata for {identifier}: {e}")
+            return None
+
+    def _get_catalog_metadata(
+        self, ws: WorkspaceClient, catalog_name: str
+    ) -> Optional[AssetMetadata]:
+        """Get metadata for a UC catalog."""
+        try:
+            catalog = ws.catalogs.get(name=catalog_name)
+            return AssetMetadata(
+                identifier=catalog.name,
+                name=catalog.name,
+                asset_type=UnifiedAssetType.UC_CATALOG,
+                connector_type=self.connector_type,
+                description=catalog.comment,
+                path=catalog.name,
+                catalog=catalog.name,
+                ownership=AssetOwnership(owner=catalog.owner),
+                properties=catalog.properties or {},
+                created_at=catalog.created_at if hasattr(catalog, "created_at") else None,
+                updated_at=catalog.updated_at if hasattr(catalog, "updated_at") else None,
+                exists=True,
+            )
+        except NotFound:
+            return None
+        except Exception as e:
+            logger.debug(f"Error getting catalog metadata for {catalog_name}: {e}")
+            return None
+
+    def _get_schema_metadata(
+        self, ws: WorkspaceClient, catalog_name: str, schema_name: str
+    ) -> Optional[AssetMetadata]:
+        """Get metadata for a UC schema."""
+        try:
+            schema = ws.schemas.get(full_name=f"{catalog_name}.{schema_name}")
+            path = f"{catalog_name}.{schema_name}"
+            return AssetMetadata(
+                identifier=path,
+                name=schema.name,
+                asset_type=UnifiedAssetType.UC_SCHEMA,
+                connector_type=self.connector_type,
+                description=schema.comment,
+                path=path,
+                catalog=catalog_name,
+                schema_name=schema.name,
+                ownership=AssetOwnership(owner=schema.owner if hasattr(schema, "owner") else None),
+                properties=schema.properties or {},
+                created_at=schema.created_at if hasattr(schema, "created_at") else None,
+                updated_at=schema.updated_at if hasattr(schema, "updated_at") else None,
+                exists=True,
+            )
+        except NotFound:
+            return None
+        except Exception as e:
+            logger.debug(f"Error getting schema metadata for {catalog_name}.{schema_name}: {e}")
             return None
     
     def _get_table_metadata(

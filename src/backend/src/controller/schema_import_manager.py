@@ -15,6 +15,7 @@ from src.connectors.base import AssetConnector, ListAssetsOptions
 from src.controller.connections_manager import ConnectionsManager
 from src.controller.assets_manager import AssetsManager
 from src.db_models.assets import AssetDb
+from src.db_models.connections import ConnectionDb
 from src.models.assets import (
     AssetCreate,
     AssetRelationshipCreate,
@@ -32,6 +33,7 @@ from src.models.schema_import import (
 )
 from src.db_models.entity_relationships import EntityRelationshipDb
 from src.repositories.assets_repository import asset_repo, asset_type_repo
+from src.repositories.connections_repository import connections_repo
 
 logger = get_logger(__name__)
 
@@ -41,7 +43,10 @@ logger = get_logger(__name__)
 # ---------------------------------------------------------------------------
 
 _TYPE_MAP: Dict[str, tuple] = {
-    # Databricks / Unity Catalog
+    # Databricks / Unity Catalog — structural containers
+    UnifiedAssetType.UC_CATALOG.value: ("Catalog", "hasCatalog"),
+    UnifiedAssetType.UC_SCHEMA.value: ("Schema", "hasSchema"),
+    # Databricks / Unity Catalog — leaf assets
     UnifiedAssetType.UC_TABLE.value: ("Table", "hasTable"),
     UnifiedAssetType.UC_VIEW.value: ("View", "hasView"),
     UnifiedAssetType.UC_MATERIALIZED_VIEW.value: ("View", "hasView"),
@@ -49,14 +54,20 @@ _TYPE_MAP: Dict[str, tuple] = {
     UnifiedAssetType.UC_FUNCTION.value: ("System", "hasPart"),
     UnifiedAssetType.UC_MODEL.value: ("ML Model", "hasPart"),
     UnifiedAssetType.UC_VOLUME.value: ("System", "hasPart"),
-    # BigQuery
+    # BigQuery — structural containers
+    UnifiedAssetType.BQ_PROJECT.value: ("Catalog", "hasCatalog"),
+    UnifiedAssetType.BQ_DATASET.value: ("Schema", "hasSchema"),
+    # BigQuery — leaf assets
     UnifiedAssetType.BQ_TABLE.value: ("Table", "hasTable"),
     UnifiedAssetType.BQ_VIEW.value: ("View", "hasView"),
     UnifiedAssetType.BQ_MATERIALIZED_VIEW.value: ("View", "hasView"),
     UnifiedAssetType.BQ_EXTERNAL_TABLE.value: ("Table", "hasTable"),
     UnifiedAssetType.BQ_ROUTINE.value: ("System", "hasPart"),
     UnifiedAssetType.BQ_MODEL.value: ("ML Model", "hasPart"),
-    # Snowflake
+    # Snowflake — structural containers
+    UnifiedAssetType.SNOWFLAKE_DATABASE.value: ("Catalog", "hasCatalog"),
+    UnifiedAssetType.SNOWFLAKE_SCHEMA.value: ("Schema", "hasSchema"),
+    # Snowflake — leaf assets
     UnifiedAssetType.SNOWFLAKE_TABLE.value: ("Table", "hasTable"),
     UnifiedAssetType.SNOWFLAKE_VIEW.value: ("View", "hasView"),
     UnifiedAssetType.SNOWFLAKE_MATERIALIZED_VIEW.value: ("View", "hasView"),
@@ -71,7 +82,8 @@ _TYPE_MAP: Dict[str, tuple] = {
     UnifiedAssetType.POWERBI_REPORT.value: ("Dashboard", "hasPart"),
 }
 
-# Container node types that represent structural hierarchy (not leaf assets)
+# Container node types used for recursive browsing (list_containers returns
+# these types). They are now also importable via _TYPE_MAP above.
 _CONTAINER_TYPES = {"catalog", "schema", "dataset", "database", "project"}
 
 # Leaf asset types whose children (columns) come from schema_info, not from
@@ -189,15 +201,16 @@ class SchemaImportManager:
             raise ValueError(f"Connection '{request.connection_id}' not found or connector unavailable")
 
         items: List[ImportPreviewItem] = []
+        expanded = self._expand_with_ancestors(request.selected_paths)
 
-        for selected_path in request.selected_paths:
+        for path, parent_path in expanded:
             self._collect_items(
                 db=db,
                 connector=connector,
-                path=selected_path,
+                path=path,
                 depth=request.depth,
                 items=items,
-                parent_path=None,
+                parent_path=parent_path,
                 current_depth=0,
             )
 
@@ -218,24 +231,32 @@ class SchemaImportManager:
         if connector is None:
             raise ValueError(f"Connection '{request.connection_id}' not found or connector unavailable")
 
-        # 1. Collect all items to import
+        # 0. Resolve or create the System asset for this connection
+        system_asset_id = self._resolve_system_asset(
+            db, request.connection_id, connector, current_user_id,
+        )
+
+        # 1. Collect all items to import (ancestors first so parents exist)
         preview_items: List[ImportPreviewItem] = []
-        for selected_path in request.selected_paths:
+        expanded = self._expand_with_ancestors(request.selected_paths)
+        for path, parent_path in expanded:
             self._collect_items(
                 db=db,
                 connector=connector,
-                path=selected_path,
+                path=path,
                 depth=request.depth,
                 items=preview_items,
-                parent_path=None,
+                parent_path=parent_path,
                 current_depth=0,
             )
 
         result = ImportResult()
+        result.system_asset_id = system_asset_id
 
         # path -> created asset UUID (used for relationship wiring)
         created_assets: Dict[str, UUID] = {}
         type_cache: Dict[str, Any] = {}
+        metadata_cache: Dict[str, Any] = {}
 
         # 2. Create assets (parents before children — items are in BFS order)
         for item in preview_items:
@@ -260,6 +281,7 @@ class SchemaImportManager:
                     item=item,
                     current_user_id=current_user_id,
                     _type_cache=type_cache,
+                    _metadata_cache=metadata_cache,
                 )
                 created_assets[item.path] = asset_read.id
                 result.created += 1
@@ -333,7 +355,140 @@ class SchemaImportManager:
                 except Exception as exc:
                     logger.debug(f"Entity relationship {item.parent_path} -> {item.path}: {exc}")
 
+        # 4. Wire System -> top-level Catalog/Schema assets
+        if system_asset_id:
+            for item in preview_items:
+                if item.parent_path is None and item.path in created_assets:
+                    rel_type = self._relationship_type_for(item.asset_type)
+                    target_id = created_assets[item.path]
+                    try:
+                        self._assets.add_relationship(
+                            db,
+                            rel_in=AssetRelationshipCreate(
+                                source_asset_id=system_asset_id,
+                                target_asset_id=target_id,
+                                relationship_type=rel_type,
+                            ),
+                            current_user_id=current_user_id,
+                        )
+                    except Exception as exc:
+                        logger.debug(f"System -> {item.path} relationship: {exc}")
+
+                    try:
+                        existing = db.query(EntityRelationshipDb).filter(
+                            EntityRelationshipDb.source_type == "System",
+                            EntityRelationshipDb.source_id == str(system_asset_id),
+                            EntityRelationshipDb.target_type == item.asset_type,
+                            EntityRelationshipDb.target_id == str(target_id),
+                            EntityRelationshipDb.relationship_type == rel_type,
+                        ).first()
+                        if not existing:
+                            db.add(EntityRelationshipDb(
+                                source_type="System",
+                                source_id=str(system_asset_id),
+                                target_type=item.asset_type,
+                                target_id=str(target_id),
+                                relationship_type=rel_type,
+                                created_by=current_user_id,
+                            ))
+                            db.flush()
+                    except Exception as exc:
+                        logger.debug(f"Entity relationship System -> {item.path}: {exc}")
+
         return result
+
+    # ------------------------------------------------------------------
+    # Ancestor expansion
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _expand_with_ancestors(
+        selected_paths: List[str],
+    ) -> List[tuple]:
+        """Expand selected paths to include ancestor paths (catalog, schema).
+
+        Returns a list of ``(path, parent_path)`` tuples ordered so that
+        ancestors are processed before their descendants.  Duplicates are
+        removed so each path appears at most once.
+
+        Example:
+          Input:  ["cat.sch.table1", "cat.sch.table2"]
+          Output: [("cat", None),
+                   ("cat.sch", "cat"),
+                   ("cat.sch.table1", "cat.sch"),
+                   ("cat.sch.table2", "cat.sch")]
+        """
+        seen: set = set()
+        result: List[tuple] = []
+
+        for selected in selected_paths:
+            parts = selected.split(".")
+            for i in range(1, len(parts) + 1):
+                path = ".".join(parts[:i])
+                if path in seen:
+                    continue
+                seen.add(path)
+                parent = ".".join(parts[: i - 1]) if i > 1 else None
+                result.append((path, parent))
+
+        return result
+
+    # ------------------------------------------------------------------
+    # System asset resolution
+    # ------------------------------------------------------------------
+
+    def _resolve_system_asset(
+        self,
+        db: Session,
+        connection_id: UUID,
+        connector: AssetConnector,
+        current_user_id: str,
+    ) -> Optional[UUID]:
+        """Return the System asset id for a connection, creating one if needed."""
+        conn_db = connections_repo.get(db, connection_id)
+        if conn_db is None:
+            return None
+
+        if conn_db.system_asset_id:
+            existing = asset_repo.get(db, conn_db.system_asset_id)
+            if existing:
+                return existing.id
+
+        system_type_db = asset_type_repo.get_by_name(db, name="System")
+        if not system_type_db:
+            logger.warning("Ontos asset type 'System' not found — skipping System creation")
+            return None
+
+        # Check if a System asset already exists for this platform + connection name
+        existing = asset_repo.get_by_identity(
+            db,
+            name=conn_db.name,
+            asset_type_id=system_type_db.id,
+            platform=connector.connector_type,
+            location=connector.connector_type,
+        )
+        if existing:
+            conn_db.system_asset_id = existing.id
+            db.flush()
+            return existing.id
+
+        system_asset = self._assets.create_asset(
+            db,
+            asset_in=AssetCreate(
+                name=conn_db.name,
+                description=f"Auto-created system for connection '{conn_db.name}'",
+                asset_type_id=system_type_db.id,
+                platform=connector.connector_type,
+                location=connector.connector_type,
+                properties={"connector_type": connector.connector_type},
+                status=AssetStatus.ACTIVE,
+            ),
+            current_user_id=current_user_id,
+        )
+        conn_db.system_asset_id = system_asset.id
+        db.flush()
+        logger.info(f"Created System asset '{conn_db.name}' (id={system_asset.id}) for connection {connection_id}")
+        return system_asset.id
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -464,7 +619,7 @@ class SchemaImportManager:
                             path=c_path,
                             depth=depth,
                             items=items,
-                            parent_path=parent_path,
+                            parent_path=path,
                             current_depth=current_depth + 1,
                             _type_cache=_type_cache,
                         )
@@ -478,6 +633,7 @@ class SchemaImportManager:
         item: ImportPreviewItem,
         current_user_id: str,
         _type_cache: Optional[Dict[str, Any]] = None,
+        _metadata_cache: Optional[Dict[str, Any]] = None,
     ):
         """Create a single Ontos asset from a preview item."""
         if _type_cache is not None and item.asset_type in _type_cache:
@@ -489,23 +645,47 @@ class SchemaImportManager:
         if not asset_type_db:
             raise ValueError(f"Ontos asset type '{item.asset_type}' not found in database")
 
-        # Fetch rich metadata from the connector when available
         properties: Dict[str, Any] = {}
         description = None
 
         if item.asset_type == "Column":
-            # Columns don't have get_asset_metadata — derive from parent
-            properties = {"source_path": item.path}
+            parent_path = item.parent_path or ".".join(item.path.split(".")[:-1])
+            col_info = self._find_column_in_cache(
+                _metadata_cache, parent_path, item.name, connector,
+            )
+            if col_info:
+                description = col_info.description
+                properties = {
+                    "data_type": col_info.data_type,
+                    "logical_type": col_info.logical_type,
+                    "nullable": col_info.nullable,
+                    "is_primary_key": col_info.is_primary_key,
+                    "is_partition_key": col_info.is_partition_key,
+                    "source_path": item.path,
+                }
+                if col_info.tags:
+                    properties["source_tags"] = col_info.tags
+            else:
+                properties = {"source_path": item.path}
         else:
             try:
                 meta = connector.get_asset_metadata(item.path)
                 if meta:
+                    if _metadata_cache is not None:
+                        _metadata_cache[item.path] = meta
                     description = meta.description
                     if meta.schema_info:
                         properties["schema"] = {
                             "column_count": meta.schema_info.column_count,
                             "columns": [
-                                {"name": c.name, "data_type": c.data_type, "nullable": c.nullable}
+                                {
+                                    "name": c.name,
+                                    "data_type": c.data_type,
+                                    "logical_type": c.logical_type,
+                                    "nullable": c.nullable,
+                                    "description": c.description,
+                                    "is_partition_key": c.is_partition_key,
+                                }
                                 for c in (meta.schema_info.columns or [])
                             ],
                         }
@@ -533,9 +713,34 @@ class SchemaImportManager:
         return self._assets.create_asset(db, asset_in=asset_in, current_user_id=current_user_id)
 
     @staticmethod
+    def _find_column_in_cache(
+        metadata_cache: Optional[Dict[str, Any]],
+        parent_path: str,
+        column_name: str,
+        connector: AssetConnector,
+    ):
+        """Look up a ColumnInfo from the cached parent metadata, fetching if needed."""
+        if metadata_cache is None:
+            metadata_cache = {}
+        meta = metadata_cache.get(parent_path)
+        if meta is None:
+            try:
+                meta = connector.get_asset_metadata(parent_path)
+                metadata_cache[parent_path] = meta
+            except Exception:
+                return None
+        if meta and meta.schema_info and meta.schema_info.columns:
+            for col in meta.schema_info.columns:
+                if col.name == column_name:
+                    return col
+        return None
+
+    @staticmethod
     def _relationship_type_for(asset_type_name: str) -> str:
         """Return the ontology relationship type for a given Ontos asset type."""
         mapping = {
+            "Catalog": "hasCatalog",
+            "Schema": "hasSchema",
             "Table": "hasTable",
             "View": "hasView",
             "Column": "hasColumn",
@@ -566,10 +771,16 @@ def _has_children(asset_type: Optional[UnifiedAssetType]) -> bool:
     if asset_type is None:
         return False
     return asset_type.value in {
+        UnifiedAssetType.UC_CATALOG.value,
+        UnifiedAssetType.UC_SCHEMA.value,
         UnifiedAssetType.UC_TABLE.value,
         UnifiedAssetType.UC_VIEW.value,
+        UnifiedAssetType.BQ_PROJECT.value,
+        UnifiedAssetType.BQ_DATASET.value,
         UnifiedAssetType.BQ_TABLE.value,
         UnifiedAssetType.BQ_VIEW.value,
+        UnifiedAssetType.SNOWFLAKE_DATABASE.value,
+        UnifiedAssetType.SNOWFLAKE_SCHEMA.value,
         UnifiedAssetType.SNOWFLAKE_TABLE.value,
         UnifiedAssetType.SNOWFLAKE_VIEW.value,
     }

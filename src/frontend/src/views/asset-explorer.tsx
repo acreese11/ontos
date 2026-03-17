@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ColumnDef, RowSelectionState, PaginationState } from '@tanstack/react-table';
 import {
-  Box, ChevronDown, MoreHorizontal, PlusCircle, AlertCircle, Loader2,
+  Box, ChevronDown, MoreHorizontal, PlusCircle, AlertCircle, Loader2, Trash2,
   Table2, Eye, Columns2, LayoutDashboard, Globe, FileCode, Brain, Activity,
   Server, Shield, BookOpen, Database, FolderOpen, Shapes, FileSpreadsheet, FileInput,
 } from 'lucide-react';
@@ -18,6 +18,7 @@ import { AssetRead, AssetTypeRead } from '@/types/asset';
 import { EntityTypeDefinition } from '@/types/ontology-schema';
 import { AssetFormDialog } from '@/components/common/asset-form-dialog';
 import AssetImportExportDialog from '@/components/assets/asset-import-export-dialog';
+import { AssetDeleteDialog } from '@/components/assets/asset-delete-dialog';
 import { useApi } from '@/hooks/use-api';
 import { useToast } from '@/hooks/use-toast';
 import { RelativeDate } from '@/components/common/relative-date';
@@ -25,10 +26,6 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
   DropdownMenuSeparator, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import {
-  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
-  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { usePermissions } from '@/stores/permissions-store';
 import { FeatureAccessLevel } from '@/types/settings';
@@ -230,20 +227,34 @@ export default function AssetExplorerView() {
     setIsDeleteDialogOpen(true);
   };
 
-  const handleDeleteConfirm = async () => {
-    if (!deletingId || !canAdmin) return;
-    try {
-      const response = await apiDelete(`/api/assets/${deletingId}`);
-      if (response.error) throw new Error(response.error);
-      toast({ title: 'Asset deleted' });
-      fetchAssets(selectedTypeId, pagination, debouncedNameFilter);
-      fetchAssetTypes();
-    } catch (err: any) {
-      toast({ variant: 'destructive', title: 'Error', description: err.message });
-    } finally {
-      setIsDeleteDialogOpen(false);
-      setDeletingId(null);
+  const handleBulkDelete = async (selectedRows: AssetRead[]) => {
+    if (!canAdmin) {
+      toast({ variant: 'destructive', title: 'Permission denied', description: 'Admin access required to delete assets' });
+      return;
     }
+    const selectedIds = selectedRows.map(r => r.id).filter((id): id is string => !!id);
+    if (selectedIds.length === 0) return;
+    if (!confirm(`Are you sure you want to delete ${selectedIds.length} asset(s)? This action cannot be undone.`)) return;
+
+    const results = await Promise.allSettled(selectedIds.map(async (id) => {
+      const response = await apiDelete(`/api/assets/${id}`);
+      if (response.error) throw new Error(response.error);
+      return id;
+    }));
+
+    const successes = results.filter(r => r.status === 'fulfilled').length;
+    const failures = results.filter(r => r.status === 'rejected').length;
+
+    if (successes > 0) {
+      toast({ title: 'Assets deleted', description: `Successfully deleted ${successes} asset(s).` });
+    }
+    if (failures > 0) {
+      const firstError = (results.find(r => r.status === 'rejected') as PromiseRejectedResult)?.reason?.message || 'Unknown error';
+      toast({ variant: 'destructive', title: 'Some deletions failed', description: `${failures} asset(s) failed to delete: ${firstError}` });
+    }
+    setRowSelection({});
+    fetchAssets(selectedTypeId, pagination, debouncedNameFilter);
+    fetchAssetTypes();
   };
 
   const columns = useMemo<ColumnDef<AssetRead>[]>(() => {
@@ -355,35 +366,37 @@ export default function AssetExplorerView() {
       id: 'actions',
       header: '',
       cell: ({ row }) => (
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="ghost" className="h-8 w-8 p-0">
-              <MoreHorizontal className="h-4 w-4" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuLabel>Actions</DropdownMenuLabel>
-            <DropdownMenuItem
-              onClick={() => navigate(`/assets/${row.original.id}`)}
-            >
-              View details
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              disabled={!canWrite}
-              onClick={() => { setEditingAsset(row.original); setIsFormOpen(true); }}
-            >
-              Edit
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem
-              onClick={() => openDeleteDialog(row.original.id)}
-              className="text-red-600 focus:text-red-600 focus:bg-red-50 dark:text-red-400 dark:focus:bg-red-950"
-              disabled={!canAdmin}
-            >
-              Delete
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <div onClick={(e) => e.stopPropagation()}>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" className="h-8 w-8 p-0">
+                <MoreHorizontal className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuLabel>Actions</DropdownMenuLabel>
+              <DropdownMenuItem
+                onClick={() => navigate(`/assets/${row.original.id}`)}
+              >
+                View details
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                disabled={!canWrite}
+                onClick={() => { setEditingAsset(row.original); setIsFormOpen(true); }}
+              >
+                Edit
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                onClick={() => openDeleteDialog(row.original.id)}
+                className="text-red-600 focus:text-red-600 focus:bg-red-50 dark:text-red-400 dark:focus:bg-red-950"
+                disabled={!canAdmin}
+              >
+                Delete
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
       ),
     },
     ];
@@ -542,39 +555,8 @@ export default function AssetExplorerView() {
               </div>
             </CardHeader>
             <CardContent>
-              {assetsLoading ? (
-                <ListViewSkeleton columns={5} rows={5} toolbarButtons={1} />
-              ) : assets.length === 0 ? (
-                <div className="text-center py-12 text-muted-foreground">
-                  <Box className="h-12 w-12 mx-auto mb-3 opacity-30" />
-                  <p className="text-sm">
-                    {selectedType
-                      ? `No ${selectedType.name} assets yet`
-                      : 'Select an asset type to view assets'}
-                  </p>
-                  <div className="flex items-center gap-2 mt-3 justify-center">
-                    {canRead && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setIsImportExportOpen(true)}
-                      >
-                        <FileSpreadsheet className="mr-2 h-4 w-4" /> Import / Export
-                      </Button>
-                    )}
-                    {canWrite && selectedType && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => { setEditingAsset(null); setIsFormOpen(true); }}
-                      >
-                        <PlusCircle className="mr-2 h-4 w-4" /> Create {selectedType.name}
-                      </Button>
-                    )}
-                  </div>
-                </div>
-              ) : (
                 <DataTable
+                  isLoading={assetsLoading}
                   columns={columns}
                   data={assets}
                   searchColumn="name"
@@ -624,8 +606,20 @@ export default function AssetExplorerView() {
                       )}
                     </div>
                   }
+                  bulkActions={(selectedRows) => (
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      className="h-9 gap-1"
+                      onClick={() => handleBulkDelete(selectedRows)}
+                      disabled={selectedRows.length === 0 || !canAdmin}
+                      title={canAdmin ? 'Delete selected assets' : 'Admin access required'}
+                    >
+                      <Trash2 className="w-4 h-4 mr-1" />
+                      Delete {selectedRows.length} Selected
+                    </Button>
+                  )}
                 />
-              )}
             </CardContent>
           </Card>
         </div>
@@ -646,22 +640,22 @@ export default function AssetExplorerView() {
         />
       )}
 
-      <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete Asset</AlertDialogTitle>
-            <AlertDialogDescription>
-              This action cannot be undone. The asset and its relationships will be permanently deleted.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel onClick={() => setDeletingId(null)}>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDeleteConfirm} className="bg-red-600 hover:bg-red-700" disabled={apiIsLoading}>
-              {apiIsLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />} Delete
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      {deletingId && (
+        <AssetDeleteDialog
+          open={isDeleteDialogOpen}
+          onOpenChange={(open) => {
+            setIsDeleteDialogOpen(open);
+            if (!open) setDeletingId(null);
+          }}
+          assetId={deletingId}
+          assetName={assets.find(a => a.id === deletingId)?.name || ''}
+          onDeleted={() => {
+            fetchAssets(selectedTypeId, pagination, debouncedNameFilter);
+            fetchAssetTypes();
+            setDeletingId(null);
+          }}
+        />
+      )}
 
       <AssetImportExportDialog
         isOpen={isImportExportOpen}

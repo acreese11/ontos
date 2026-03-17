@@ -332,6 +332,48 @@ class EntityTagAssociationRepository(CRUDBase[EntityTagAssociationDb, BaseModel,
             )
         return assigned_tags
 
+    def get_assigned_tags_for_entities(self, db: Session, *, entity_ids: List[str], entity_type: str) -> dict:
+        """Batch-load tags for multiple entities. Returns {entity_id: [AssignedTag, ...]}."""
+        if not entity_ids:
+            return {}
+        results = (
+            db.query(
+                EntityTagAssociationDb.entity_id,
+                TagDb.id,
+                TagDb.name,
+                TagDb.namespace_id,
+                TagNamespaceDb.name.label("namespace_name"),
+                TagDb.status,
+                EntityTagAssociationDb.assigned_value,
+                EntityTagAssociationDb.assigned_by,
+                EntityTagAssociationDb.assigned_at
+            )
+            .join(EntityTagAssociationDb, TagDb.id == EntityTagAssociationDb.tag_id)
+            .join(TagNamespaceDb, TagDb.namespace_id == TagNamespaceDb.id)
+            .filter(
+                EntityTagAssociationDb.entity_id.in_(entity_ids),
+                EntityTagAssociationDb.entity_type == entity_type
+            )
+            .all()
+        )
+        tags_map: dict = {eid: [] for eid in entity_ids}
+        for row in results:
+            fqn = f"{row.namespace_name}{TAG_NAMESPACE_SEPARATOR}{row.name}"
+            tags_map.setdefault(row.entity_id, []).append(
+                AssignedTag(
+                    tag_id=row.id,
+                    tag_name=row.name,
+                    namespace_id=row.namespace_id,
+                    namespace_name=row.namespace_name,
+                    status=TagStatus(row.status),
+                    fully_qualified_name=fqn,
+                    assigned_value=row.assigned_value,
+                    assigned_by=row.assigned_by,
+                    assigned_at=row.assigned_at
+                )
+            )
+        return tags_map
+
     def get_entities_for_tag(self, db: Session, *, tag_id: UUID, entity_type: Optional[str] = None) -> List[Tuple[str, str]]:
         query = db.query(EntityTagAssociationDb.entity_id, EntityTagAssociationDb.entity_type).filter(
             EntityTagAssociationDb.tag_id == tag_id

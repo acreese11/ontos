@@ -59,8 +59,7 @@ class DataContractDb(Base):
     updated_by = Column(String, nullable=True)
 
     # Relationships
-    owner_team = relationship("TeamDb", foreign_keys=[owner_team_id], lazy="selectin")
-    parent_contract = relationship("DataContractDb", remote_side=[id], foreign_keys=[parent_contract_id], lazy="selectin")  # Self-referential for versioning
+    # Lightweight relationships: selectin is fine, always needed for list views
     tags = relationship("DataContractTagDb", back_populates="contract", cascade="all, delete-orphan", lazy="selectin")
     servers = relationship("DataContractServerDb", back_populates="contract", cascade="all, delete-orphan", lazy="selectin")
     roles = relationship("DataContractRoleDb", back_populates="contract", cascade="all, delete-orphan", lazy="selectin")
@@ -70,10 +69,13 @@ class DataContractDb(Base):
     authoritative_defs = relationship("DataContractAuthoritativeDefinitionDb", back_populates="contract", cascade="all, delete-orphan", lazy="selectin")
     custom_properties = relationship("DataContractCustomPropertyDb", back_populates="contract", cascade="all, delete-orphan", lazy="selectin")
     sla_properties = relationship("DataContractSlaPropertyDb", back_populates="contract", cascade="all, delete-orphan", lazy="selectin")
-    schema_objects = relationship("SchemaObjectDb", back_populates="contract", cascade="all, delete-orphan", lazy="selectin")
-    comments = relationship("DataContractCommentDb", back_populates="contract", cascade="all, delete-orphan", lazy="selectin")
-    profiling_runs = relationship("DataProfilingRunDb", back_populates="contract", cascade="all, delete-orphan", lazy="selectin")
-    suggested_quality_checks = relationship("SuggestedQualityCheckDb", back_populates="contract", cascade="all, delete-orphan", lazy="selectin")
+    # Heavy relationships: lazy="select" to prevent auto-loading on list queries
+    owner_team = relationship("TeamDb", foreign_keys=[owner_team_id], lazy="select")
+    parent_contract = relationship("DataContractDb", remote_side=[id], foreign_keys=[parent_contract_id], lazy="select")
+    schema_objects = relationship("SchemaObjectDb", back_populates="contract", cascade="all, delete-orphan", lazy="select")
+    comments = relationship("DataContractCommentDb", back_populates="contract", cascade="all, delete-orphan", lazy="select")
+    profiling_runs = relationship("DataProfilingRunDb", back_populates="contract", cascade="all, delete-orphan", lazy="select")
+    suggested_quality_checks = relationship("SuggestedQualityCheckDb", back_populates="contract", cascade="all, delete-orphan", lazy="select")
 
 
 class DataContractTagDb(Base):

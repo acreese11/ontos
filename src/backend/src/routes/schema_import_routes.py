@@ -28,6 +28,7 @@ from src.models.schema_import import (
     ImportRequest,
     ImportResult,
 )
+from src.models.assets import AssetMetadata
 
 logger = get_logger(__name__)
 
@@ -80,6 +81,37 @@ async def browse(
         raise HTTPException(status_code=404, detail=str(exc))
     except Exception as exc:
         logger.error(f"Browse failed for connection {connection_id}: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ------------------------------------------------------------------
+# Metadata (get asset metadata via connector for schema inference)
+# ------------------------------------------------------------------
+
+@router.get(
+    "/metadata/{connection_id}",
+    response_model=AssetMetadata,
+    summary="Get asset metadata via connector",
+)
+async def get_asset_metadata(
+    connection_id: UUID,
+    path: str,
+    db: DBSessionDep = None,
+    manager: SchemaImportManager = Depends(_get_manager),
+):
+    """Fetch detailed metadata (including schema/columns) for an asset via its connector."""
+    try:
+        connector = manager._connections.get_connector_for_connection(connection_id)
+        if connector is None:
+            raise HTTPException(status_code=404, detail=f"Connection '{connection_id}' not found")
+        metadata = connector.get_asset_metadata(path)
+        if metadata is None:
+            raise HTTPException(status_code=404, detail=f"No metadata found for path '{path}'")
+        return metadata
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error(f"Metadata fetch failed for {connection_id}/{path}: {exc}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(exc))
 
 

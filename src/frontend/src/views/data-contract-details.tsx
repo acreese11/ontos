@@ -204,6 +204,13 @@ export default function DataContractDetails() {
   const [schemaLinks, setSchemaLinks] = useState<Record<string, EntitySemanticLink[]>>({})
   const [propertyLinks, setPropertyLinks] = useState<Record<string, EntitySemanticLink[]>>({})
 
+  // Lazy-loaded schema properties with pagination
+  const [schemaProperties, setSchemaProperties] = useState<Record<string, SchemaProperty[]>>({})
+  const [schemaPropTotal, setSchemaPropTotal] = useState<Record<string, number>>({})
+  const [schemaPropPage, setSchemaPropPage] = useState<Record<string, number>>({})
+  const [loadingSchemaProps, setLoadingSchemaProps] = useState(false)
+  const PROPS_PAGE_SIZE = 50
+
   // Linked products state
   const [linkedProducts, setLinkedProducts] = useState<DataProduct[]>([])
   const [loadingProducts, setLoadingProducts] = useState(false)
@@ -229,9 +236,13 @@ export default function DataContractDetails() {
   type ContractVersionInfo = { id: string; version: string; status: string; createdAt: string }
   const [versions, setVersions] = useState<ContractVersionInfo[]>([])
 
+  // Admin permission check — admins can edit/delete regardless of status
+  const contractPermissionLevel = getPermissionLevel('data-contracts')
+  const isContractAdmin = contractPermissionLevel === FeatureAccessLevel.ADMIN || contractPermissionLevel === FeatureAccessLevel.FULL
+
   // Computed properties for status-based editability
-  // Only draft/proposed contracts can be edited in place
-  const canEditInPlace = contract?.status && EDITABLE_STATUSES.includes(contract.status.toLowerCase())
+  // Admins bypass status restrictions; others need draft/proposed
+  const canEditInPlace = isContractAdmin || (contract?.status && EDITABLE_STATUSES.includes(contract.status.toLowerCase()))
   // Personal drafts are editable since they have draft status
   const isPersonalDraft = contract?.draftOwnerId != null
   // Contract is read-only if it's not editable and not a personal draft
@@ -390,15 +401,51 @@ export default function DataContractDetails() {
     }
   }
 
-  const fetchAllSchemaAuthDefs = async () => {
-    if (!contract?.schema) return
-    for (const schema of contract.schema) {
-      const schemaId = (schema as any).id || schema.name  // Use id if available, fallback to name
-      if (schemaId) {
-        await fetchSchemaAuthDefs(schemaId)
-      }
+  const fetchSelectedSchemaAuthDefs = () => {
+    if (!contract?.schema || contract.schema.length === 0) return
+    const schema = contract.schema[selectedSchemaIndex]
+    if (!schema) return
+    const schemaId = (schema as any).id || schema.name
+    if (schemaId && !schemaAuthDefs[schemaId]) {
+      fetchSchemaAuthDefs(schemaId)
     }
   }
+
+  const fetchSchemaSemanticLinks = useCallback(async (schemaName: string) => {
+    if (!contractId || !schemaName) return
+    try {
+      const schemaEntityId = `${contractId}#${schemaName}`
+      const schemaLinksRes = await fetch(`/api/semantic-links/entity/data_contract_schema/${encodeURIComponent(schemaEntityId)}`)
+      if (schemaLinksRes.ok) {
+        const data = await schemaLinksRes.json()
+        setSchemaLinks(prev => ({ ...prev, [schemaName]: Array.isArray(data) ? data : [] }))
+      }
+    } catch (e) {
+      console.warn('Failed to fetch schema links for', schemaName, ':', e)
+    }
+  }, [contractId])
+
+  const fetchSchemaProperties = useCallback(async (schemaName: string, page: number = 0) => {
+    if (!contractId || !schemaName) return
+    setLoadingSchemaProps(true)
+    try {
+      const skip = page * PROPS_PAGE_SIZE
+      const res = await fetch(
+        `/api/data-contracts/${contractId}/schemas/${encodeURIComponent(schemaName)}/properties?skip=${skip}&limit=${PROPS_PAGE_SIZE}`
+      )
+      if (res.ok) {
+        const data = await res.json()
+        const items = data.items ?? []
+        setSchemaProperties(prev => ({ ...prev, [schemaName]: items }))
+        setSchemaPropTotal(prev => ({ ...prev, [schemaName]: data.total ?? 0 }))
+        setSchemaPropPage(prev => ({ ...prev, [schemaName]: page }))
+      }
+    } catch (e) {
+      console.warn('Failed to fetch schema properties for', schemaName, ':', e)
+    } finally {
+      setLoadingSchemaProps(false)
+    }
+  }, [contractId, fetchSchemaSemanticLinks])
 
   const fetchDetails = async () => {
     if (!contractId) return
@@ -431,45 +478,8 @@ export default function DataContractDetails() {
         setLinks([])
       }
 
-      // Fetch schema and property semantic links if contract has schemas
-      if (contractData?.schema) {
-        const schemaLinksMap: Record<string, EntitySemanticLink[]> = {}
-        const propertyLinksMap: Record<string, EntitySemanticLink[]> = {}
-
-        for (const schema of contractData.schema) {
-          // Fetch schema-level semantic links
-          const schemaEntityId = `${contractId}#${schema.name}`
-          try {
-            const schemaLinksRes = await fetch(`/api/semantic-links/entity/data_contract_schema/${encodeURIComponent(schemaEntityId)}`)
-            if (schemaLinksRes.ok) {
-              const schemaLinksData = await schemaLinksRes.json()
-              schemaLinksMap[schema.name] = Array.isArray(schemaLinksData) ? schemaLinksData : []
-            }
-          } catch (e) {
-            console.warn("Failed to fetch schema links for", schema.name, ":", e)
-          }
-
-          // Fetch property-level semantic links
-          if (schema.properties) {
-            for (const property of schema.properties) {
-              const propertyEntityId = `${contractId}#${schema.name}#${property.name}`
-              const propertyKey = `${schema.name}#${property.name}`
-              try {
-                const propertyLinksRes = await fetch(`/api/semantic-links/entity/data_contract_property/${encodeURIComponent(propertyEntityId)}`)
-                if (propertyLinksRes.ok) {
-                  const propertyLinksData = await propertyLinksRes.json()
-                  propertyLinksMap[propertyKey] = Array.isArray(propertyLinksData) ? propertyLinksData : []
-                }
-              } catch (e) {
-                console.warn("Failed to fetch property links for", propertyKey, ":", e)
-              }
-            }
-          }
-        }
-
-        setSchemaLinks(schemaLinksMap)
-        setPropertyLinks(propertyLinksMap)
-      }
+      // Schema and property semantic links are now fetched on-demand
+      // when the user selects a schema (see fetchSchemaSemanticLinks)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load')
       setDynamicTitle('Error')
@@ -582,12 +592,23 @@ export default function DataContractDetails() {
     }
   }, [contractId, setStaticSegments, setDynamicTitle, fetchProfileRuns])
 
-  // Fetch schema-level authoritative definitions when contract is loaded
+  // Fetch authoritative definitions for the currently selected schema only
   useEffect(() => {
-    if (contract?.schema) {
-      fetchAllSchemaAuthDefs()
+    fetchSelectedSchemaAuthDefs()
+  }, [contract?.schema, selectedSchemaIndex])
+
+  // Lazy-load properties and schema-level semantic links for the currently selected schema
+  useEffect(() => {
+    if (!contract?.schema || contract.schema.length === 0) return
+    const schema = contract.schema[selectedSchemaIndex]
+    if (!schema) return
+    if (!schemaProperties[schema.name]) {
+      fetchSchemaProperties(schema.name, 0)
     }
-  }, [contract?.schema])
+    if (!schemaLinks[schema.name]) {
+      fetchSchemaSemanticLinks(schema.name)
+    }
+  }, [contract?.schema, selectedSchemaIndex, fetchSchemaProperties, fetchSchemaSemanticLinks])
 
   // Poll for profiling updates while profiling is running
   useEffect(() => {
@@ -1438,6 +1459,37 @@ export default function DataContractDetails() {
 
   const serversList = Array.isArray(contract.servers) ? contract.servers : (contract.servers ? [contract.servers] : [])
 
+  const renderSchemaPropertiesTable = () => {
+    const schemaName = contract?.schema?.[selectedSchemaIndex]?.name || ''
+    const props = schemaProperties[schemaName] || []
+    const totalProps = schemaPropTotal[schemaName] || 0
+    const currentPage = schemaPropPage[schemaName] || 0
+    const totalPages = Math.ceil(totalProps / PROPS_PAGE_SIZE)
+
+    if (loadingSchemaProps && props.length === 0) {
+      return <div className="flex items-center gap-2 py-4 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Loading columns...</div>
+    }
+    if (props.length === 0 && totalProps === 0) return null
+    return (
+      <div className="space-y-2">
+        <DataTable
+          columns={createSchemaPropertyColumns(contract, selectedSchemaIndex, propertyLinks)}
+          data={props}
+          searchColumn="name"
+        />
+        {totalPages > 1 && (
+          <div className="flex items-center justify-between text-sm text-muted-foreground pt-1">
+            <span>Showing {currentPage * PROPS_PAGE_SIZE + 1}–{Math.min((currentPage + 1) * PROPS_PAGE_SIZE, totalProps)} of {totalProps} columns</span>
+            <div className="flex gap-1">
+              <Button size="sm" variant="outline" disabled={currentPage === 0 || loadingSchemaProps} onClick={() => fetchSchemaProperties(schemaName, currentPage - 1)}>Previous</Button>
+              <Button size="sm" variant="outline" disabled={currentPage >= totalPages - 1 || loadingSchemaProps} onClick={() => fetchSchemaProperties(schemaName, currentPage + 1)}>Next</Button>
+            </div>
+          </div>
+        )}
+      </div>
+    )
+  }
+
   return (
     <div className="py-6 space-y-6">
       <div className="flex items-center justify-between">
@@ -1914,13 +1966,7 @@ export default function DataContractDetails() {
                     )}
                   </div>
                 </div>
-                {contract.schema[0].properties && contract.schema[0].properties.length > 0 && (
-                  <DataTable
-                    columns={createSchemaPropertyColumns(contract, 0, propertyLinks)}
-                    data={contract.schema[0].properties as SchemaProperty[]}
-                    searchColumn="name"
-                  />
-                )}
+                {renderSchemaPropertiesTable()}
 
                 {/* Schema Authoritative Definitions */}
                 {shouldShowSection('authoritative-definitions') && (() => {
@@ -2000,7 +2046,7 @@ export default function DataContractDetails() {
                     <SelectContent className="max-h-[40vh] overflow-y-auto" position="popper" sideOffset={5}>
                       {contract.schema.map((schemaObj, idx) => (
                         <SelectItem key={idx} value={idx.toString()}>
-                          {schemaObj.name || `Table ${idx + 1}`} ({schemaObj.properties?.length || 0} columns)
+                          {schemaObj.name || `Table ${idx + 1}`} ({schemaPropTotal[schemaObj.name] ?? schemaObj.propertyCount ?? 0} columns)
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -2055,13 +2101,7 @@ export default function DataContractDetails() {
                       )}
                     </div>
                   </div>
-                  {contract.schema[selectedSchemaIndex]?.properties && contract.schema[selectedSchemaIndex].properties.length > 0 && (
-                    <DataTable
-                      columns={createSchemaPropertyColumns(contract, selectedSchemaIndex, propertyLinks)}
-                      data={contract.schema[selectedSchemaIndex].properties as SchemaProperty[]}
-                      searchColumn="name"
-                    />
-                  )}
+                  {renderSchemaPropertiesTable()}
 
                   {/* Schema Authoritative Definitions */}
                   {shouldShowSection('authoritative-definitions') && (() => {
@@ -2147,7 +2187,7 @@ export default function DataContractDetails() {
                       >
                         {schemaObj.name || `Table ${idx + 1}`}
                         <span className="ml-2 text-xs">
-                          ({schemaObj.properties?.length || 0})
+                          ({schemaPropTotal[schemaObj.name] ?? schemaObj.propertyCount ?? schemaObj.properties?.length ?? 0})
                         </span>
                       </button>
                     ))}
@@ -2202,13 +2242,7 @@ export default function DataContractDetails() {
                       )}
                     </div>
                   </div>
-                  {contract.schema[selectedSchemaIndex]?.properties && contract.schema[selectedSchemaIndex].properties.length > 0 && (
-                    <DataTable
-                      columns={createSchemaPropertyColumns(contract, selectedSchemaIndex, propertyLinks)}
-                      data={contract.schema[selectedSchemaIndex].properties as SchemaProperty[]}
-                      searchColumn="name"
-                    />
-                  )}
+                  {renderSchemaPropertiesTable()}
 
                   {/* Schema Authoritative Definitions */}
                   {shouldShowSection('authoritative-definitions') && (() => {

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Network, Loader2, AlertCircle, Search, ChevronRight,
@@ -348,6 +348,7 @@ export default function HierarchyBrowserView() {
   const [rootsError, setRootsError] = useState<string | null>(null);
 
   const [selectedNode, setSelectedNode] = useState<InstanceHierarchyNode | null>(null);
+  const selectedRef = useRef<string | null>(null);
   const [detailNode, setDetailNode] = useState<InstanceHierarchyNode | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailViewMode, setDetailViewMode] = useState<DetailViewMode>('tree');
@@ -393,15 +394,6 @@ export default function HierarchyBrowserView() {
 
   useEffect(() => { fetchRoots(); }, [fetchRoots]);
 
-  // Auto-select from URL params
-  useEffect(() => {
-    const type = searchParams.get('type');
-    const id = searchParams.get('id');
-    if (type && id && !selectedNode) {
-      handleSelectNode({ entity_type: type, entity_id: id, name: '', child_count: 0, children: [] });
-    }
-  }, [searchParams]); // eslint-disable-line react-hooks/exhaustive-deps
-
   const fetchDetail = useCallback(async (entityType: string, entityId: string, depth: string) => {
     setDetailLoading(true);
     try {
@@ -422,11 +414,21 @@ export default function HierarchyBrowserView() {
   }, [apiGet]);
 
   const handleSelectNode = useCallback(async (node: InstanceHierarchyNode) => {
+    selectedRef.current = node.entity_id;
     setSelectedNode(node);
     setVisibleTypes(new Set());
     setSearchParams({ type: node.entity_type, id: node.entity_id }, { replace: true });
     fetchDetail(node.entity_type, node.entity_id, maxDepth);
   }, [setSearchParams, fetchDetail, maxDepth]);
+
+  // Auto-select from URL params (initial load only)
+  useEffect(() => {
+    const type = searchParams.get('type');
+    const id = searchParams.get('id');
+    if (type && id && !selectedRef.current) {
+      handleSelectNode({ entity_type: type, entity_id: id, name: '', child_count: 0, children: [] });
+    }
+  }, [searchParams]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleMaxDepthChange = useCallback((depth: string) => {
     setMaxDepth(depth);

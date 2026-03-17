@@ -302,6 +302,12 @@ def stop_token_refresh_background():
         logger.info("OAuth token refresh background thread stopped")
 
 
+def _use_password_auth(settings: Settings) -> bool:
+    """Determine if password auth should be used for the database.
+    True when ENV=LOCAL or when DB_USE_PASSWORD_AUTH is explicitly set."""
+    return settings.ENV.upper().startswith("LOCAL") or settings.DB_USE_PASSWORD_AUTH
+
+
 def get_db_url(settings: Settings) -> str:
     """Construct the PostgreSQL SQLAlchemy URL with appropriate auth method."""
     
@@ -309,8 +315,7 @@ def get_db_url(settings: Settings) -> str:
     if not all([settings.PGHOST, settings.PGDATABASE]):
         raise ValueError("PostgreSQL connection details (PGHOST, PGDATABASE) are missing in settings.")
     
-    # Determine authentication mode based on ENV
-    use_password_auth = settings.ENV.upper().startswith("LOCAL")
+    use_password_auth = _use_password_auth(settings)
     
     if use_password_auth:
         logger.info("Database: Using password authentication (LOCAL mode)")
@@ -390,9 +395,9 @@ def ensure_database_and_schema_exist(settings: Settings):
     
     Security: All PostgreSQL identifiers are validated to prevent SQL injection.
     """
-    is_local_mode = settings.ENV.upper().startswith("LOCAL")
+    is_local_mode = _use_password_auth(settings)
     
-    logger.info(f"Ensuring database and schema exist ({'LOCAL' if is_local_mode else 'OAuth'} mode)...")
+    logger.info(f"Ensuring database and schema exist ({'password' if is_local_mode else 'OAuth'} auth mode)...")
     
     # Determine username based on mode
     if is_local_mode:
@@ -660,8 +665,8 @@ def init_db() -> None:
                                 pool_pre_ping=True)
         engine = _engine # Assign to public variable
 
-        # Add OAuth token injection if not in LOCAL mode
-        if not settings.ENV.upper().startswith("LOCAL"):
+        # Add OAuth token injection if using Lakebase OAuth auth
+        if not _use_password_auth(settings):
             logger.info("Setting up OAuth token injection for Lakebase...")
             
             # Generate initial token
@@ -757,7 +762,7 @@ def init_db() -> None:
                 # For Lakebase (OAuth mode), we need to pass the token to the subprocess
                 # via environment variable since the subprocess can't access our in-memory token
                 subprocess_env = os.environ.copy()
-                is_lakebase_mode = not settings.ENV.upper().startswith("LOCAL")
+                is_lakebase_mode = not _use_password_auth(settings)
                 if is_lakebase_mode:
                     # Refresh token to ensure it's valid for the subprocess
                     logger.info("Refreshing OAuth token for Alembic subprocess...")

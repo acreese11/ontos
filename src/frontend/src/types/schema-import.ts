@@ -50,4 +50,5 @@ export interface ImportResult {
   errors: number;
   error_messages: string[];
   items: ImportResultItem[];
+  system_asset_id: string | null;
 }

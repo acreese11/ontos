@@ -103,6 +103,7 @@ const RoleFormDialog: React.FC<RoleFormDialogProps> = ({
         home_sections: initialRole?.home_sections || [],
         approval_privileges: normalizeApprovalPrivileges(initialRole?.approval_privileges),
         deployment_policy: normalizeDeploymentPolicy(initialRole?.deployment_policy),
+        is_admin: initialRole?.is_admin || false,
         requestable_by_roles: initialRole?.requestable_by_roles || [],
         approver_roles: initialRole?.approver_roles || [],
     } as AppRole;
@@ -127,6 +128,7 @@ const RoleFormDialog: React.FC<RoleFormDialogProps> = ({
                 home_sections: initialRole.home_sections || [],
                 approval_privileges: normalizeApprovalPrivileges(initialRole.approval_privileges),
                 deployment_policy: normalizeDeploymentPolicy(initialRole.deployment_policy),
+                is_admin: initialRole.is_admin || false,
                 requestable_by_roles: initialRole.requestable_by_roles || [],
                 approver_roles: initialRole.approver_roles || [],
             } : { 
@@ -138,6 +140,7 @@ const RoleFormDialog: React.FC<RoleFormDialogProps> = ({
                 home_sections: [],
                 approval_privileges: {},
                 deployment_policy: null,
+                is_admin: false,
                 requestable_by_roles: [],
                 approver_roles: [],
             };
@@ -172,6 +175,7 @@ const RoleFormDialog: React.FC<RoleFormDialogProps> = ({
                 home_sections: [],
                 approval_privileges: {},
                 deployment_policy: null,
+                is_admin: false,
                 requestable_by_roles: [],
                 approver_roles: [],
             } as AppRole);
@@ -385,6 +389,22 @@ const RoleFormDialog: React.FC<RoleFormDialogProps> = ({
                                                 </label>
                                             ))}
                                         </div>
+                                    </div>
+
+                                    {/* Admin Role Flag */}
+                                    <div className="space-y-3 pt-4 border-t">
+                                        <h4 className="font-medium">{t('roles.privileges.adminRole.title', 'Admin Role')}</h4>
+                                        <p className="text-xs text-muted-foreground">
+                                            {t('roles.privileges.adminRole.description', 'Mark this role as the admin role. Only one role should be marked as admin.')}
+                                        </p>
+                                        <label className="flex items-center gap-2 text-sm">
+                                            <input
+                                                type="checkbox"
+                                                {...register('is_admin')}
+                                                defaultChecked={Boolean(defaultValues.is_admin)}
+                                            />
+                                            <span>{t('roles.privileges.adminRole.label', 'This is the admin role')}</span>
+                                        </label>
                                     </div>
 
                                 </div>

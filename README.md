@@ -64,8 +64,8 @@ cd ontos
 cd src/frontend
 yarn install
 
-# Copy and configure environment
-cd ../..
+# Copy and configure backend environment
+cd ../../src/backend
 cp .env.example .env
 # Edit .env with your configuration
 ```
@@ -81,6 +81,7 @@ yarn dev:frontend
 **Terminal 2 - Backend:**
 ```bash
 cd src
+mkdir backend/static
 hatch -e dev run dev-backend
 ```
 

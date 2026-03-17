@@ -6,7 +6,7 @@ and resolves entity names for display.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, Set, TYPE_CHECKING
 from uuid import UUID
 
 from sqlalchemy.orm import Session
@@ -425,7 +425,8 @@ class EntityRelationshipsManager:
             description=info.get("description"),
         )
 
-        self._expand_children(db, root, current_depth=0, max_depth=max_depth)
+        visited: Set[tuple] = set()
+        self._expand_children(db, root, current_depth=0, max_depth=max_depth, visited=visited)
         return root
 
     def _expand_children(
@@ -434,10 +435,16 @@ class EntityRelationshipsManager:
         node: InstanceHierarchyNode,
         current_depth: int,
         max_depth: int,
+        visited: Set[tuple],
     ) -> None:
         """Recursively expand children for a hierarchy node using ontology relationships."""
         if current_depth >= max_depth:
             return
+
+        node_key = (node.entity_type, node.entity_id)
+        if node_key in visited:
+            return
+        visited.add(node_key)
 
         type_iri = self._normalize_entity_type(node.entity_type)
         hier_rels = self._osm.get_hierarchy_relationships(type_iri)
@@ -458,6 +465,8 @@ class EntityRelationshipsManager:
                 limit=500,
             )
             for row in child_rows:
+                if (row.target_type, row.target_id) in visited:
+                    continue
                 child_info = self._resolve_entity(db, row.target_type, row.target_id)
                 if not child_info:
                     continue
@@ -472,7 +481,7 @@ class EntityRelationshipsManager:
                     relationship_type=rel_name,
                     relationship_label=rel_def.label,
                 )
-                self._expand_children(db, child_node, current_depth + 1, max_depth)
+                self._expand_children(db, child_node, current_depth + 1, max_depth, visited)
                 children.append(child_node)
 
         # Incoming hierarchical relationships (e.g. System <- belongsToSystem <- Asset)
@@ -486,6 +495,8 @@ class EntityRelationshipsManager:
                 limit=500,
             )
             for row in child_rows:
+                if (row.source_type, row.source_id) in visited:
+                    continue
                 child_info = self._resolve_entity(db, row.source_type, row.source_id)
                 if not child_info:
                     continue
@@ -500,7 +511,7 @@ class EntityRelationshipsManager:
                     relationship_type=rel_name,
                     relationship_label=rel_def.inverse_label or rel_def.label,
                 )
-                self._expand_children(db, child_node, current_depth + 1, max_depth)
+                self._expand_children(db, child_node, current_depth + 1, max_depth, visited)
                 children.append(child_node)
 
         node.children = children

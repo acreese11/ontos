@@ -12,10 +12,7 @@ import { Separator } from '@/components/ui/separator';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import {
-  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
-  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
+import { AssetDeleteDialog } from '@/components/assets/asset-delete-dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { AssetRead } from '@/types/asset';
 import { EntityTypeDefinition } from '@/types/ontology-schema';
@@ -107,7 +104,7 @@ export default function AssetDetailView() {
   const [isLineageEditorOpen, setIsLineageEditorOpen] = useState(false);
   const [relViewMode, setRelViewMode] = useState<'table' | 'graph'>('table');
 
-  const { get: apiGet, delete: apiDelete, loading: apiIsLoading } = useApi();
+  const { get: apiGet, loading: apiIsLoading } = useApi();
   const { toast } = useToast();
   const { hasPermission, isLoading: permissionsLoading } = usePermissions();
   const setStaticSegments = useBreadcrumbStore((state) => state.setStaticSegments);
@@ -180,20 +177,6 @@ export default function AssetDetailView() {
     }
     return () => { setStaticSegments([]); setDynamicTitle(null); };
   }, [asset, setStaticSegments, setDynamicTitle]);
-
-  const handleDelete = async () => {
-    if (!assetId) return;
-    try {
-      const response = await apiDelete(`/api/assets/${assetId}`);
-      if (response.error) throw new Error(response.error);
-      toast({ title: 'Asset deleted' });
-      navigate(-1);
-    } catch (err: any) {
-      toast({ variant: 'destructive', title: 'Error', description: err.message });
-    } finally {
-      setIsDeleteDialogOpen(false);
-    }
-  };
 
   if (loading) {
     return (
@@ -588,27 +571,15 @@ export default function AssetDetailView() {
       )}
 
       {/* Delete confirmation */}
-      <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete Asset</AlertDialogTitle>
-            <AlertDialogDescription>
-              Are you sure you want to delete "{asset.name}"? This action cannot be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleDelete}
-              className="bg-red-600 hover:bg-red-700"
-              disabled={apiIsLoading}
-            >
-              {apiIsLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Delete
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      {assetId && (
+        <AssetDeleteDialog
+          open={isDeleteDialogOpen}
+          onOpenChange={setIsDeleteDialogOpen}
+          assetId={assetId}
+          assetName={asset?.name || ''}
+          onDeleted={() => navigate(-1)}
+        />
+      )}
     </div>
   );
 }

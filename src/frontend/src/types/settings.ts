@@ -45,6 +45,7 @@ export interface AppRole {
     home_sections?: HomeSection[];
     approval_privileges?: ApprovalPrivileges;
     deployment_policy?: DeploymentPolicy | null;
+    is_admin?: boolean;
     // Role hierarchy fields
     requestable_by_roles?: string[];  // Role IDs that can request this role (use '__NO_ROLE__' for users without any role)
     approver_roles?: string[];  // Role IDs that can approve access requests for this role

@@ -422,7 +422,7 @@ class BigQueryConnector(AssetConnector):
                 AssetInfo(
                     identifier=f"{ds.project}.{name}",
                     name=name,
-                    asset_type=UnifiedAssetType.GENERIC,
+                    asset_type=UnifiedAssetType.BQ_DATASET,
                     connector_type=self.connector_type,
                     path=f"{ds.project}.{name}",
                     catalog=ds.project,
@@ -542,12 +542,21 @@ class BigQueryConnector(AssetConnector):
 
     def get_asset_metadata(self, identifier: str) -> Optional[AssetMetadata]:
         client = self._ensure_client()
-        parsed = self._parse_identifier(identifier)
-        if not parsed["name"]:
-            logger.warning(f"Invalid identifier: {identifier}")
+        parts = identifier.split(".") if identifier else []
+
+        if not parts:
             return None
 
         try:
+            # Single part -> project (mapped to Catalog)
+            if len(parts) == 1:
+                return self._get_project_metadata(client, parts[0])
+
+            # Two parts -> dataset (mapped to Schema)
+            if len(parts) == 2:
+                return self._get_dataset_metadata(client, parts[0], parts[1])
+
+            # Three+ parts -> leaf asset
             metadata = self._get_table_metadata(client, identifier)
             if metadata:
                 return metadata
@@ -568,6 +577,58 @@ class BigQueryConnector(AssetConnector):
             raise ConnectorPermissionError(str(exc), self.connector_type) from exc
         except GoogleAPICallError as exc:
             logger.error(f"BQ API error for {identifier}: {exc}")
+            return None
+
+    def _get_project_metadata(
+        self, client: bigquery.Client, project: str,
+    ) -> Optional[AssetMetadata]:
+        """Return lightweight metadata for a BQ project (mapped to Catalog)."""
+        return AssetMetadata(
+            identifier=project,
+            name=project,
+            asset_type=UnifiedAssetType.BQ_PROJECT,
+            connector_type=self.connector_type,
+            description=None,
+            path=project,
+            catalog=project,
+            exists=True,
+        )
+
+    def _get_dataset_metadata(
+        self, client: bigquery.Client, project: str, dataset_id: str,
+    ) -> Optional[AssetMetadata]:
+        """Return metadata for a BQ dataset (mapped to Schema)."""
+        try:
+            ds = client.get_dataset(f"{project}.{dataset_id}")
+            path = f"{project}.{dataset_id}"
+
+            created_at = ds.created
+            modified_at = ds.modified
+            if created_at and created_at.tzinfo is None:
+                created_at = created_at.replace(tzinfo=timezone.utc)
+            if modified_at and modified_at.tzinfo is None:
+                modified_at = modified_at.replace(tzinfo=timezone.utc)
+
+            return AssetMetadata(
+                identifier=path,
+                name=dataset_id,
+                asset_type=UnifiedAssetType.BQ_DATASET,
+                connector_type=self.connector_type,
+                description=ds.description,
+                path=path,
+                catalog=project,
+                schema_name=dataset_id,
+                location=ds.location,
+                tags=dict(ds.labels or {}),
+                properties={"location": ds.location, "default_table_expiration_ms": ds.default_table_expiration_ms},
+                created_at=created_at,
+                updated_at=modified_at,
+                exists=True,
+            )
+        except NotFound:
+            return None
+        except Exception as exc:
+            logger.debug(f"Error getting dataset metadata for {project}.{dataset_id}: {exc}")
             return None
 
     def _get_table_metadata(

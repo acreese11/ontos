@@ -6,6 +6,7 @@ export interface Connection {
   config: Record<string, any>;
   enabled: boolean;
   is_default: boolean;
+  system_asset_id: string | null;
   created_by: string | null;
   created_at: string;
   updated_at: string;
@@ -26,6 +27,7 @@ export interface ConnectionUpdate {
   config?: Record<string, any>;
   enabled?: boolean;
   is_default?: boolean;
+  system_asset_id?: string | null;
 }
 
 export interface ConnectorTypeInfo {

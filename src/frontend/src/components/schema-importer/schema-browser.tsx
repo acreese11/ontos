@@ -10,6 +10,7 @@ import {
   Box,
   FolderOpen,
   Braces,
+  Library,
   X,
   Search,
   AlertCircle,
@@ -47,7 +48,7 @@ interface LoadResult {
 }
 
 const nodeIconMap: Record<string, typeof Database> = {
-  catalog: Database,
+  catalog: Library,
   schema: FolderOpen,
   dataset: FolderOpen,
   database: Database,

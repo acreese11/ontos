@@ -43,6 +43,7 @@ from src.models.data_contracts_api import (
     DataContractCreate,
     DataContractUpdate,
     DataContractRead,
+    DataContractSummary,
     DataContractCommentCreate,
     DataContractCommentRead,
 )
@@ -81,7 +82,7 @@ def get_jobs_manager(request: Request):
 
  
 
-@router.get('/data-contracts', response_model=list[DataContractRead])
+@router.get('/data-contracts', response_model=list[DataContractSummary])
 async def get_contracts(
     db: DBSessionDep,
     domain_id: Optional[str] = None,
@@ -101,16 +102,27 @@ async def get_contracts(
 
         logger.info(f"User {current_user.email if current_user else 'unknown'} fetching contracts (project_id: {project_id}, domain_id: {domain_id}, is_admin: {is_admin})")
 
-        return manager.list_contracts_from_db(
+        result = manager.list_contracts_from_db(
             db,
             domain_id=domain_id,
             project_id=project_id,
             is_admin=is_admin
         )
+        return result
     except Exception as e:
         error_msg = f"Error retrieving data contracts: {e!s}"
         logger.error(error_msg)
         raise HTTPException(status_code=500, detail=error_msg)
+
+@router.get('/data-contracts/count')
+async def get_contracts_count(
+    db: DBSessionDep,
+    _: bool = Depends(PermissionChecker('data-contracts', FeatureAccessLevel.READ_ONLY))
+):
+    """Get total count of data contracts without loading any relationships."""
+    count = db.query(DataContractDb).count()
+    return {"count": count}
+
 
 @router.get('/data-contracts/{contract_id}', response_model=DataContractRead)
 async def get_contract(
@@ -1056,19 +1068,26 @@ async def upload_contract(
 
         # Load with relationships for response
         created_with_relations = data_contract_repo.get_with_all(db, id=created.id)
-        return manager._build_contract_api_model(db, created_with_relations)
+        result = manager._build_contract_api_model(db, created_with_relations)
+        return result
 
     except ValueError as e:
         logger.error("Validation error uploading contract: %s", e)
         details_for_audit["exception"] = {"type": "ValueError", "message": str(e)}
-        raise HTTPException(status_code=400, detail="Invalid contract data")
+        raise HTTPException(status_code=400, detail={
+            "message": "Invalid contract data",
+            "error": str(e),
+        })
     except HTTPException as http_exc:
         details_for_audit["exception"] = {"type": "HTTPException", "status_code": http_exc.status_code, "detail": http_exc.detail}
         raise
     except Exception as e:
         logger.exception("Upload failed")
         details_for_audit["exception"] = {"type": type(e).__name__, "message": str(e)}
-        raise HTTPException(status_code=500, detail="Upload failed")
+        raise HTTPException(status_code=500, detail={
+            "message": "Upload failed",
+            "error": f"{type(e).__name__}: {e}",
+        })
     finally:
         if created_contract_id:
             details_for_audit["created_resource_id"] = created_contract_id
@@ -1098,7 +1117,178 @@ async def get_odcs_schema(_perm: bool = Depends(PermissionChecker('data-contract
         raise HTTPException(status_code=500, detail="Failed to load schema file")
 
 
-# ODCS import functionality now handled by /data-contracts/upload endpoint
+@router.post('/data-contracts/odcs/import')
+async def import_odcs_json(
+    request: Request,
+    db: DBSessionDep,
+    audit_manager: AuditManagerDep,
+    current_user: AuditCurrentUserDep,
+    body: dict = Body(...),
+    manager: DataContractsManager = Depends(get_data_contracts_manager),
+    _: bool = Depends(PermissionChecker('data-contracts', FeatureAccessLevel.READ_WRITE)),
+):
+    """Import an ODCS contract from a pasted JSON object."""
+    success = False
+    details_for_audit: dict = {"params": {"source": "paste"}}
+    created_contract_id = None
+
+    try:
+        contract_text = json.dumps(body)
+
+        parsed = manager.parse_uploaded_file(
+            file_content=contract_text,
+            filename="paste.json",
+            content_type="application/json",
+        )
+
+        validation_warnings = manager.validate_odcs(parsed, strict=False)
+        for warning in validation_warnings[:5]:
+            logger.warning(warning)
+
+        created = manager.create_from_upload(
+            db=db,
+            parsed_odcs=parsed,
+            current_user=current_user.username if current_user else None,
+        )
+
+        success = True
+        created_contract_id = created.id
+
+        created_with_relations = data_contract_repo.get_with_all(db, id=created.id)
+        return manager._build_contract_api_model(db, created_with_relations)
+
+    except ValueError as e:
+        logger.error("Validation error importing ODCS JSON: %s", e)
+        details_for_audit["exception"] = {"type": "ValueError", "message": str(e)}
+        raise HTTPException(status_code=400, detail={
+            "message": "Invalid contract data",
+            "error": str(e),
+        })
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("ODCS JSON import failed")
+        details_for_audit["exception"] = {"type": type(e).__name__, "message": str(e)}
+        raise HTTPException(status_code=500, detail={
+            "message": "Import failed",
+            "error": f"{type(e).__name__}: {e}",
+        })
+    finally:
+        if created_contract_id:
+            details_for_audit["created_resource_id"] = created_contract_id
+        audit_manager.log_action(
+            db=db,
+            username=current_user.username if current_user else "anonymous",
+            ip_address=request.client.host if request.client else None,
+            feature="data-contracts",
+            action="IMPORT_ODCS_JSON",
+            success=success,
+            details=details_for_audit,
+        )
+
+
+# --- Lazy Schema / Properties Endpoints ---
+
+@router.get('/data-contracts/{contract_id}/schemas')
+async def get_contract_schemas(
+    contract_id: str,
+    db: DBSessionDep,
+    _: bool = Depends(PermissionChecker('data-contracts', FeatureAccessLevel.READ_ONLY))
+):
+    """List schema objects for a contract (names + property counts, no properties loaded)."""
+    from sqlalchemy import func as sa_func
+    contract = data_contract_repo.get(db, id=contract_id)
+    if not contract:
+        raise HTTPException(status_code=404, detail="Contract not found")
+
+    rows = (
+        db.query(
+            SchemaObjectDb.id,
+            SchemaObjectDb.name,
+            SchemaObjectDb.physical_name,
+            SchemaObjectDb.business_name,
+            SchemaObjectDb.physical_type,
+            SchemaObjectDb.description,
+            sa_func.count(SchemaPropertyDb.id).label("property_count")
+        )
+        .outerjoin(SchemaPropertyDb, SchemaPropertyDb.object_id == SchemaObjectDb.id)
+        .filter(SchemaObjectDb.contract_id == contract_id)
+        .group_by(SchemaObjectDb.id)
+        .order_by(SchemaObjectDb.name)
+        .all()
+    )
+    return [
+        {
+            "id": r.id,
+            "name": r.name,
+            "physicalName": r.physical_name,
+            "businessName": r.business_name,
+            "physicalType": r.physical_type,
+            "description": r.description,
+            "propertyCount": r.property_count,
+        }
+        for r in rows
+    ]
+
+
+@router.get('/data-contracts/{contract_id}/schemas/{schema_name}/properties')
+async def get_schema_properties(
+    contract_id: str,
+    schema_name: str,
+    db: DBSessionDep,
+    skip: int = 0,
+    limit: int = 50,
+    _: bool = Depends(PermissionChecker('data-contracts', FeatureAccessLevel.READ_ONLY))
+):
+    """Get paginated properties for a specific schema object."""
+    from sqlalchemy import func as sa_func
+
+    schema_obj = (
+        db.query(SchemaObjectDb)
+        .filter(SchemaObjectDb.contract_id == contract_id, SchemaObjectDb.name == schema_name)
+        .first()
+    )
+    if not schema_obj:
+        raise HTTPException(status_code=404, detail=f"Schema '{schema_name}' not found")
+
+    total = db.query(sa_func.count(SchemaPropertyDb.id)).filter(SchemaPropertyDb.object_id == schema_obj.id).scalar()
+
+    props = (
+        db.query(SchemaPropertyDb)
+        .filter(SchemaPropertyDb.object_id == schema_obj.id)
+        .order_by(SchemaPropertyDb.name)
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
+
+    items = []
+    for p in props:
+        options = {}
+        if p.logical_type_options_json:
+            try:
+                options = json.loads(p.logical_type_options_json)
+            except Exception:
+                pass
+        item = {
+            "name": p.name,
+            "logicalType": p.logical_type or "string",
+            "physicalType": p.physical_type,
+            "required": p.required,
+            "unique": p.unique,
+            "primaryKey": p.primary_key,
+            "primaryKeyPosition": p.primary_key_position,
+            "partitioned": p.partitioned,
+            "partitionKeyPosition": p.partition_key_position,
+            "classification": p.classification,
+            "description": p.transform_description,
+            "businessName": p.business_name,
+            "criticalDataElement": p.critical_data_element,
+        }
+        item.update(options)
+        items.append(item)
+
+    return {"items": items, "total": total, "skip": skip, "limit": limit}
 
 
 @router.get('/data-contracts/{contract_id}/odcs/export')

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
-import { Loader2, HeartPulse } from 'lucide-react';
+import { Loader2, HeartPulse, Server } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { Button } from '@/components/ui/button';
@@ -30,12 +30,18 @@ interface ConnectionFormDialogProps {
   onSubmitSuccess: () => void;
 }
 
+interface SystemAssetOption {
+  id: string;
+  name: string;
+}
+
 const formSchema = z.object({
   name: z.string().min(1, 'Name is required').max(200),
   connector_type: z.string().min(1, 'Connector type is required'),
   description: z.string().max(500).optional().nullable(),
   enabled: z.boolean(),
   is_default: z.boolean(),
+  system_asset_id: z.string().optional().nullable(),
   // BigQuery config fields
   project_id: z.string().optional(),
   location: z.string().optional(),
@@ -66,6 +72,7 @@ export function ConnectionFormDialog({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
   const [connectorTypes, setConnectorTypes] = useState<ConnectorTypeInfo[]>([]);
+  const [systemAssets, setSystemAssets] = useState<SystemAssetOption[]>([]);
 
   const isEditing = !!initialConnection;
   const isSystem = initialConnection?.created_by === SYSTEM_CREATED_BY;
@@ -78,12 +85,13 @@ export function ConnectionFormDialog({
       description: '',
       enabled: true,
       is_default: false,
+      system_asset_id: null,
     },
   });
 
   const selectedType = form.watch('connector_type');
 
-  // Fetch connector types on mount
+  // Fetch connector types and System assets on mount
   useEffect(() => {
     const fetchTypes = async () => {
       try {
@@ -95,7 +103,18 @@ export function ConnectionFormDialog({
         // ignore
       }
     };
+    const fetchSystemAssets = async () => {
+      try {
+        const response = await api.get<{ items: SystemAssetOption[] }>('/api/assets?asset_type=System&limit=200');
+        if (response.data?.items) {
+          setSystemAssets(response.data.items);
+        }
+      } catch {
+        // ignore
+      }
+    };
     fetchTypes();
+    fetchSystemAssets();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Reset form when dialog opens or initialConnection changes
@@ -108,6 +127,7 @@ export function ConnectionFormDialog({
         description: initialConnection?.description || '',
         enabled: initialConnection?.enabled ?? true,
         is_default: initialConnection?.is_default ?? false,
+        system_asset_id: initialConnection?.system_asset_id || null,
         project_id: cfg.project_id || '',
         location: cfg.location || '',
         uc_connection_name: cfg.uc_connection_name || '',
@@ -132,6 +152,7 @@ export function ConnectionFormDialog({
       config,
       enabled: values.enabled,
       is_default: values.is_default,
+      system_asset_id: values.system_asset_id || null,
     };
   };
 
@@ -298,6 +319,48 @@ export function ConnectionFormDialog({
                 )}
               />
             </div>
+
+            {/* Linked System Asset */}
+            <Separator />
+            <FormField
+              control={form.control}
+              name="system_asset_id"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel className="flex items-center gap-1.5">
+                    <Server className="h-3.5 w-3.5" />
+                    {t('settings:connectors.form.systemAsset', 'Linked System Asset')}
+                  </FormLabel>
+                  <Select
+                    onValueChange={(v) => field.onChange(v === '__none__' ? null : v)}
+                    value={field.value || '__none__'}
+                  >
+                    <FormControl>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Auto-create on first import" />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      <SelectItem value="__none__">
+                        <span className="text-muted-foreground">Auto-create on first import</span>
+                      </SelectItem>
+                      {systemAssets.map((sa) => (
+                        <SelectItem key={sa.id} value={sa.id}>
+                          {sa.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <FormDescription>
+                    {t(
+                      'settings:connectors.form.systemAssetHelp',
+                      'Link to an existing System asset, or leave empty to auto-create one on the first import.',
+                    )}
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
 
             {/* BigQuery-specific config */}
             {selectedType === 'bigquery' && (

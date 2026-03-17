@@ -39,6 +39,7 @@ class Settings(BaseSettings):
     PGDATABASE: Optional[str] = Field(None, validation_alias=AliasChoices('PGDATABASE', 'POSTGRES_DB'))
     PGSCHEMA: Optional[str] = Field("public", validation_alias=AliasChoices('PGSCHEMA', 'POSTGRES_DB_SCHEMA'))
     LAKEBASE_INSTANCE_NAME: Optional[str] = None  # Instance name for Lakebase OAuth authentication
+    DB_USE_PASSWORD_AUTH: bool = Field(False, env='DB_USE_PASSWORD_AUTH')  # Force password auth even in PROD mode (for deployments without Lakebase)
     
     # Database connection pool settings
     DB_POOL_SIZE: int = Field(5, env='DB_POOL_SIZE')  # Base connection pool size

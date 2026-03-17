@@ -17,6 +17,15 @@ export type DataContractListItem = {
   baseName?: string
   // Personal draft visibility
   draftOwnerId?: string // If set, this is a personal draft
+  // Summary field from list endpoint
+  schemaObjectCount?: number
+  // Fields returned by summary endpoint for compatibility
+  domain?: string
+  domainId?: string
+  kind?: string
+  apiVersion?: string
+  tenant?: string
+  description?: ContractDescription
 }
 
 // ODCS compliant column property
@@ -74,6 +83,7 @@ export type SchemaObject = {
   name: string
   physicalName?: string
   properties: ColumnProperty[]
+  propertyCount?: number
   // Extended UC metadata
   description?: string
   tableType?: string
@@ -89,6 +99,25 @@ export type SchemaObject = {
   authoritativeDefinitions?: { url: string; type: string }[]
   // Optional local helper used by wizard/editor to collect concepts
   semanticConcepts?: { iri: string; label?: string }[]
+}
+
+// Lightweight schema summary for listing (no properties loaded)
+export type SchemaSummary = {
+  id: string
+  name: string
+  physicalName?: string
+  businessName?: string
+  physicalType?: string
+  description?: string
+  propertyCount: number
+}
+
+// Paginated properties response
+export type PaginatedProperties = {
+  items: ColumnProperty[]
+  total: number
+  skip: number
+  limit: number
 }
 
 // ODCS compliant description

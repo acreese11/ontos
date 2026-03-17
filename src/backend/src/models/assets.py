@@ -44,6 +44,12 @@ class UnifiedAssetType(str, Enum):
     This allows platform-specific handling while maintaining a unified interface.
     """
     # -------------------------------------------------------------------------
+    # Unity Catalog / Databricks - Structural Containers
+    # -------------------------------------------------------------------------
+    UC_CATALOG = "uc_catalog"
+    UC_SCHEMA = "uc_schema"
+
+    # -------------------------------------------------------------------------
     # Unity Catalog / Databricks - Data Assets
     # -------------------------------------------------------------------------
     UC_TABLE = "uc_table"
@@ -68,6 +74,12 @@ class UnifiedAssetType(str, Enum):
     UC_METRIC = "uc_metric"  # Unity Catalog metrics (AI/BI)
     
     # -------------------------------------------------------------------------
+    # Snowflake - Structural Containers
+    # -------------------------------------------------------------------------
+    SNOWFLAKE_DATABASE = "snowflake_database"
+    SNOWFLAKE_SCHEMA = "snowflake_schema"
+
+    # -------------------------------------------------------------------------
     # Snowflake - Data Assets
     # -------------------------------------------------------------------------
     SNOWFLAKE_TABLE = "snowflake_table"
@@ -83,6 +95,12 @@ class UnifiedAssetType(str, Enum):
     SNOWFLAKE_PROCEDURE = "snowflake_procedure"
     SNOWFLAKE_TASK = "snowflake_task"
     
+    # -------------------------------------------------------------------------
+    # BigQuery - Structural Containers
+    # -------------------------------------------------------------------------
+    BQ_PROJECT = "bq_project"
+    BQ_DATASET = "bq_dataset"
+
     # -------------------------------------------------------------------------
     # BigQuery - Data Assets
     # -------------------------------------------------------------------------
@@ -666,3 +684,24 @@ class PaginatedAssetSummary(BaseModel):
     total: int
     skip: int
     limit: int
+
+
+# --- Cascade Delete Models ---
+
+class DeletePreviewItem(BaseModel):
+    """A node in the cascade-delete preview tree."""
+    id: UUID
+    name: str
+    asset_type_name: Optional[str] = None
+    relationship_type: Optional[str] = None
+    level: int = 0
+    children: List["DeletePreviewItem"] = Field(default_factory=list)
+
+
+class CascadeDeleteRequest(BaseModel):
+    asset_ids: List[UUID] = Field(..., min_length=1, description="Asset IDs to delete")
+
+
+class CascadeDeleteResult(BaseModel):
+    deleted: List[Dict[str, Any]] = Field(default_factory=list)
+    failed: List[Dict[str, Any]] = Field(default_factory=list)

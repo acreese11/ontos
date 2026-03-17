@@ -115,24 +115,27 @@ share `asset-detail.tsx`. Panels must be **conditionally rendered** based on
 
 Legend: **Y** = show | **—** = hide | **Σ** = summary only
 
-| Panel / Table | Table | View | Column | Dataset | Dashboard | Notebook | ML Model | API Endpoint | Stream | Policy | Business Term | Logical Entity | Logical Attribute | Delivery Channel | System |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| **Costs** | - | - | — | - | - | — | - | — | - | — | — | — | — | — | - |
-| **Quality** | Y | Y | — | Y | — | — | Y | — | — | — | — | — | — | — | — |
-| **Comments** | Y | Y | — | Y | Y | Y | Y | Y | - | — | Y | — | — | — | — |
-| **Ratings** | — | — | — | Y | Y | — | Y | — | — | — | — | — | — | — | — |
-| **Relationships** | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y |
-| **Subscriptions** | — | — | — | Y | — | — | — | — | — | — | — | — | — | — | — |
-| **Tags** | Y | Y | — | Y | Y | Y | Y | Y | Y | Y | Y | — | — | — | Y |
-| **Metadata (rich/link/doc)** | Y | Y | — | Y | Y | Y | Y | Y | Y | Y | Y | Y | — | — | Y |
-| **Change Log** | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y |
-| **Access Grants** | Y | Y | — | Y | — | — | — | — | — | — | — | — | — | — | — |
-| **Ownership** | Y | Y | — | Y | Y | Y | Y | Y | Y | Y | Y | Y | — | — | Y |
-| **Lineage** | Y | Y | — | Y | — | — | Y | — | Y | — | — | — | — | — | — |
-| **Impact Analysis** | — | — | — | — | — | — | — | — | — | Y | Y | Y | — | — | — |
+| Panel / Table | Catalog | Schema | Table | View | Column | Dataset | Dashboard | Notebook | ML Model | API Endpoint | Stream | Policy | Business Term | Logical Entity | Logical Attribute | Delivery Channel | System |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| **Costs** | — | — | - | - | — | - | - | — | - | — | - | — | — | — | — | — | - |
+| **Quality** | — | — | Y | Y | — | Y | — | — | Y | — | — | — | — | — | — | — | — |
+| **Comments** | — | — | Y | Y | — | Y | Y | Y | Y | Y | - | — | Y | — | — | — | — |
+| **Ratings** | — | — | — | — | — | Y | Y | — | Y | — | — | — | — | — | — | — | — |
+| **Relationships** | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y |
+| **Subscriptions** | — | — | — | — | — | Y | — | — | — | — | — | — | — | — | — | — | — |
+| **Tags** | Y | Y | Y | Y | — | Y | Y | Y | Y | Y | Y | Y | Y | — | — | — | Y |
+| **Metadata (rich/link/doc)** | Y | Y | Y | Y | — | Y | Y | Y | Y | Y | Y | Y | Y | Y | — | — | Y |
+| **Change Log** | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y |
+| **Access Grants** | — | — | Y | Y | — | Y | — | — | — | — | — | — | — | — | — | — | — |
+| **Ownership** | Y | Y | Y | Y | — | Y | Y | Y | Y | Y | Y | Y | Y | Y | — | — | Y |
+| **Lineage** | — | — | Y | Y | — | Y | — | — | Y | — | Y | — | — | — | — | — | — |
+| **Impact Analysis** | — | — | — | — | — | — | — | — | — | — | — | Y | Y | Y | — | — | — |
 
 ### Notes – Tier 2
 
+- **Catalog / Schema**: Structural containers in the platform hierarchy
+  (System > Catalog > Schema > Table). They carry relationships, tags, metadata,
+  ownership, and change log, but not costs, quality, ratings, or lineage.
 - **Column / Logical Attribute / Delivery Channel**: These are leaf-level or
   structural entities. They need relationships (to parent table, to logical model)
   and change log, but no costs, comments, ratings, ownership, or lineage.
