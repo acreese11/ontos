@@ -19,7 +19,15 @@ export function useDataProductsData(): TileData {
     }
 
     if (!hasPermission('data-products', FeatureAccessLevel.READ_ONLY)) {
-      setData({ value: 0, loading: false, error: null });
+      setData({
+        value: 0,
+        loading: false,
+        error: null,
+        customData: {
+          products: [],
+          statusBreakdown: [],
+        },
+      });
       return;
     }
 
@@ -66,6 +74,10 @@ export function useDataProductsData(): TileData {
           value: 0,
           loading: false,
           error: error.message,
+          customData: {
+            products: [],
+            statusBreakdown: [],
+          },
         });
       });
   }, [hasPermission, appliedRoleId, permissionsLoading]);

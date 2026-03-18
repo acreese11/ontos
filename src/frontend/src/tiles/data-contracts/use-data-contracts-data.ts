@@ -18,7 +18,15 @@ export function useDataContractsData(): TileData {
     }
 
     if (!hasPermission('data-contracts', FeatureAccessLevel.READ_ONLY)) {
-      setData({ value: 0, loading: false, error: null });
+      setData({
+        value: 0,
+        loading: false,
+        error: null,
+        customData: {
+          contracts: [],
+          statusBreakdown: [],
+        },
+      });
       return;
     }
 
@@ -70,6 +78,10 @@ export function useDataContractsData(): TileData {
           value: 0,
           loading: false,
           error: error.message,
+          customData: {
+            contracts: [],
+            statusBreakdown: [],
+          },
         });
       });
   }, [hasPermission, appliedRoleId, permissionsLoading]);

@@ -23,7 +23,10 @@ export function useComplianceData(): TileData {
       setData({
         value: t('home:overview.tiles.compliance.notAvailable'),
         loading: false,
-        error: null
+        error: null,
+        customData: {
+          trendData: undefined,
+        },
       });
       return;
     }
@@ -56,6 +59,9 @@ export function useComplianceData(): TileData {
           value: t('home:overview.tiles.compliance.notAvailable'),
           loading: false,
           error: error.message,
+          customData: {
+            trendData: undefined,
+          },
         });
       });
   }, [hasPermission, appliedRoleId, permissionsLoading, t]);

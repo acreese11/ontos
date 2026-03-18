@@ -18,7 +18,15 @@ export function useSemanticModelsData(): TileData {
     }
 
     if (!hasPermission('semantic-models', FeatureAccessLevel.READ_ONLY)) {
-      setData({ value: 0, loading: false, error: null });
+      setData({
+        value: 0,
+        loading: false,
+        error: null,
+        customData: {
+          modelsCount: 0,
+          collectionBreakdown: [],
+        },
+      });
       return;
     }
 
@@ -65,6 +73,10 @@ export function useSemanticModelsData(): TileData {
           value: 0,
           loading: false,
           error: error.message,
+          customData: {
+            modelsCount: 0,
+            collectionBreakdown: [],
+          },
         });
       });
   }, [hasPermission, appliedRoleId, permissionsLoading]);
