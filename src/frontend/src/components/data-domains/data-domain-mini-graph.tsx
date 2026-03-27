@@ -201,7 +201,7 @@ const DataDomainMiniGraphInner: React.FC<DataDomainMiniGraphProps> = ({ currentD
   useEffect(() => {
     // Small delay to ensure nodes are rendered before fitting
     const timer = setTimeout(() => {
-      fitView({ padding: 0.2, duration: 200 });
+      fitView({ padding: 0.05, duration: 200 });
     }, 50);
     return () => clearTimeout(timer);
   }, [nodes, fitView]);
@@ -229,7 +229,7 @@ const DataDomainMiniGraphInner: React.FC<DataDomainMiniGraphProps> = ({ currentD
       nodeTypes={nodeTypes}
       defaultEdgeOptions={defaultEdgeOptions}
       fitView
-      fitViewOptions={{ padding: 0.2 }}
+      fitViewOptions={{ padding: 0.05 }}
       proOptions={{ hideAttribution: true }}
       nodesDraggable={false}
       nodesConnectable={false}

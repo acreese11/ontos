@@ -4,6 +4,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Loader2, Database, BoxSelect, Star, AlertCircle, Info, Bell } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import EntityInfoDialog from '@/components/metadata/entity-info-dialog';
+import SubscribeDialog from '@/components/data-products/subscribe-dialog';
+import ApprovalWizardDialog from '@/components/workflows/approval-wizard-dialog';
 import { useDomains } from '@/hooks/use-domains';
 import { type DataProduct } from '@/types/data-product';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -11,6 +13,8 @@ import { DataDomain } from '@/types/data-domain';
 import { DataDomainMiniGraph } from '@/components/data-domains/data-domain-mini-graph';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
+import { useApi } from '@/hooks/use-api';
+import { Badge } from '@/components/ui/badge';
 
 interface DiscoverySectionProps {
   maxItems?: number;
@@ -34,8 +38,17 @@ export default function DiscoverySection({ maxItems = 12 }: DiscoverySectionProp
   
   // Subscribed products state
   const [subscribedProducts, setSubscribedProducts] = useState<DataProduct[]>([]);
+  const [subscribedProductIds, setSubscribedProductIds] = useState<Set<string>>(new Set());
   const [subscribedLoading, setSubscribedLoading] = useState<boolean>(false);
   const [_subscribedError, setSubscribedError] = useState<string | null>(null);
+
+  // Subscription dialog state
+  const [selectedProduct, setSelectedProduct] = useState<DataProduct | null>(null);
+  const [subscribeDialogOpen, setSubscribeDialogOpen] = useState(false);
+  const [subscriptionWizardOpen, setSubscriptionWizardOpen] = useState(false);
+  const [subscriptionWorkflowId, setSubscriptionWorkflowId] = useState<string | null>(null);
+
+  const api = useApi();
 
   useEffect(() => {
     const loadProducts = async () => {
@@ -58,32 +71,37 @@ export default function DiscoverySection({ maxItems = 12 }: DiscoverySectionProp
   }, []);
 
   // Fetch user's subscribed products
-  useEffect(() => {
-    const loadSubscribedProducts = async () => {
-      try {
-        setSubscribedLoading(true);
-        const resp = await fetch('/api/data-products/my-subscriptions');
-        if (!resp.ok) {
-          if (resp.status === 401) {
-            // Not authenticated, silently skip
-            setSubscribedProducts([]);
-            return;
-          }
-          throw new Error(`HTTP error! status: ${resp.status}`);
+  const loadSubscribedProducts = useCallback(async () => {
+    try {
+      setSubscribedLoading(true);
+      const resp = await fetch('/api/data-products/my-subscriptions');
+      if (!resp.ok) {
+        if (resp.status === 401) {
+          // Not authenticated, silently skip
+          setSubscribedProducts([]);
+          setSubscribedProductIds(new Set());
+          return;
         }
-        const data = await resp.json();
-        setSubscribedProducts(Array.isArray(data) ? data : []);
-        setSubscribedError(null);
-      } catch (e: any) {
-        console.warn('Failed to fetch subscribed products:', e);
-        setSubscribedError(null); // Don't show error, just hide section
-        setSubscribedProducts([]);
-      } finally {
-        setSubscribedLoading(false);
+        throw new Error(`HTTP error! status: ${resp.status}`);
       }
-    };
-    loadSubscribedProducts();
+      const data = await resp.json();
+      const products = Array.isArray(data) ? data : [];
+      setSubscribedProducts(products);
+      setSubscribedProductIds(new Set(products.map((p: DataProduct) => p.id).filter(Boolean)));
+      setSubscribedError(null);
+    } catch (e: any) {
+      console.warn('Failed to fetch subscribed products:', e);
+      setSubscribedError(null); // Don't show error, just hide section
+      setSubscribedProducts([]);
+      setSubscribedProductIds(new Set());
+    } finally {
+      setSubscribedLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    loadSubscribedProducts();
+  }, [loadSubscribedProducts]);
 
   // Choose a sensible default domain (prefer a domain named "Core")
   useEffect(() => {
@@ -197,6 +215,31 @@ export default function DiscoverySection({ maxItems = 12 }: DiscoverySectionProp
     });
   }, [allProducts, selectedDomainId, matchSets]);
 
+  // Handle subscribe button click
+  const handleSubscribeClick = async (product: DataProduct) => {
+    setSelectedProduct(product);
+    try {
+      const res = await api.get<{ id: string }>('/api/workflows/for-trigger/for_subscribe');
+      if (res.data?.id) {
+        setSubscriptionWorkflowId(res.data.id);
+        setSubscriptionWizardOpen(true);
+      } else {
+        setSubscribeDialogOpen(true);
+      }
+    } catch {
+      setSubscribeDialogOpen(true);
+    }
+  };
+
+  // Handle successful subscription
+  const handleSubscriptionSuccess = () => {
+    loadSubscribedProducts();
+    setSubscribeDialogOpen(false);
+    setSubscriptionWizardOpen(false);
+    setSubscriptionWorkflowId(null);
+    setSelectedProduct(null);
+  };
+
   return (
     <section className="mb-16">
       <h2 className="text-2xl font-semibold mb-4">{t('discoverySection.title')}</h2>
@@ -276,14 +319,30 @@ export default function DiscoverySection({ maxItems = 12 }: DiscoverySectionProp
                         <CardDescription className="line-clamp-2">{description}</CardDescription>
                       ) : null}
                     </CardHeader>
-                    <CardContent>
-                      <div className="text-xs text-muted-foreground mb-1 truncate" title={domainLabel || undefined}>
-                        {t('discoverySection.domain')}: {domainLabel || t('discoverySection.unknown')}
+                    <CardContent className="pt-0">
+                      <div className="flex items-center gap-2 flex-wrap mb-2">
+                        <Badge variant="secondary" className="text-xs">
+                          {domainLabel || t('discoverySection.unknown')}
+                        </Badge>
+                        {p.status && (
+                          <Badge variant="outline" className="text-xs">
+                            {p.status}
+                          </Badge>
+                        )}
                       </div>
-                      <div className="flex justify-between text-xs text-muted-foreground">
-                        <span className="truncate max-w-[60%]">{t('discoverySection.owner')}: {owner}</span>
-                        <span>{p.status || t('discoverySection.status')}</span>
+                      <div className="text-xs text-muted-foreground mb-2 truncate">
+                        Owner: {owner}
                       </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="w-full"
+                        asChild
+                      >
+                        <Link to={p.id ? `/data-products/${p.id}` : '/data-products'}>
+                          Manage
+                        </Link>
+                      </Button>
                     </CardContent>
                   </Card>
                 </div>
@@ -354,14 +413,44 @@ export default function DiscoverySection({ maxItems = 12 }: DiscoverySectionProp
                           <CardDescription className="line-clamp-2">{description}</CardDescription>
                         ) : null}
                       </CardHeader>
-                      <CardContent>
-                        <div className="text-xs text-muted-foreground mb-1 truncate" title={domainLabel || undefined}>
-                          {t('discoverySection.domain')}: {domainLabel || t('discoverySection.unknown')}
+                      <CardContent className="pt-0">
+                        <div className="flex items-center gap-2 flex-wrap mb-2">
+                          <Badge variant="secondary" className="text-xs">
+                            {domainLabel || t('discoverySection.unknown')}
+                          </Badge>
+                          {p.status && (
+                            <Badge variant="outline" className="text-xs">
+                              {p.status}
+                            </Badge>
+                          )}
                         </div>
-                        <div className="flex justify-between text-xs text-muted-foreground">
-                          <span className="truncate max-w-[60%]">{t('discoverySection.owner')}: {owner}</span>
-                          <span>{p.status || t('discoverySection.status')}</span>
+                        <div className="text-xs text-muted-foreground mb-2 truncate">
+                          Owner: {owner}
                         </div>
+                        {subscribedProductIds.has(p.id || '') ? (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="w-full"
+                            disabled
+                          >
+                            <Bell className="h-3.5 w-3.5 mr-1" />
+                            Subscribed
+                          </Button>
+                        ) : (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="w-full"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              handleSubscribeClick(p);
+                            }}
+                          >
+                            Subscribe
+                          </Button>
+                        )}
                       </CardContent>
                     </Card>
                   </div>
@@ -377,6 +466,40 @@ export default function DiscoverySection({ maxItems = 12 }: DiscoverySectionProp
         open={!!infoProductId}
         onOpenChange={(open) => { if (!open) { setInfoProductId(null); setInfoProductTitle(undefined); } }}
       />
+
+      {/* Subscription wizard (approval workflow with completion_action=subscribe) */}
+      {selectedProduct && subscriptionWizardOpen && subscriptionWorkflowId && (
+        <ApprovalWizardDialog
+          isOpen={subscriptionWizardOpen}
+          onOpenChange={(open) => {
+            setSubscriptionWizardOpen(open);
+            if (!open) {
+              setSubscriptionWorkflowId(null);
+              setSelectedProduct(null);
+            }
+          }}
+          entityType="data_product"
+          entityId={selectedProduct.id || ''}
+          preselectedWorkflowId={subscriptionWorkflowId}
+          completionAction="subscribe"
+          autoStartWithPreselected
+          onComplete={handleSubscriptionSuccess}
+        />
+      )}
+
+      {/* Subscribe Dialog (fallback when no subscription workflow) */}
+      {selectedProduct && (
+        <SubscribeDialog
+          open={subscribeDialogOpen}
+          onOpenChange={(open) => {
+            setSubscribeDialogOpen(open);
+            if (!open) setSelectedProduct(null);
+          }}
+          productId={selectedProduct.id || ''}
+          productName={selectedProduct.name || 'Unknown Product'}
+          onSuccess={handleSubscriptionSuccess}
+        />
+      )}
     </section>
   );
 }

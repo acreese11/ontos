@@ -1,8 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { DataContractListItem, DataContractCreate } from '@/types/data-contract';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { useNavigate, useLocation } from 'react-router-dom'
+import { useNavigate, useLocation, useSearchParams } from 'react-router-dom'
 import { useDomains } from '@/hooks/use-domains'
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -46,6 +46,7 @@ export default function DataContracts() {
   const { currentProject, hasProjectContext } = useProjectContext();
   const navigate = useNavigate();
   const { pathname } = useLocation();
+  const [searchParams] = useSearchParams();
 
   useEffect(() => {
     fetchContracts();
@@ -268,6 +269,18 @@ export default function DataContracts() {
     }
   };
 
+  // Filter contracts based on URL parameter
+  const filteredContracts = useMemo(() => {
+    const statusFilter = searchParams.get('status');
+    if (!statusFilter) return contracts;
+
+    const filterLower = statusFilter.toLowerCase();
+    return contracts.filter(c => {
+      const contractStatus = (c.status || '').toLowerCase();
+      return contractStatus === filterLower;
+    });
+  }, [contracts, searchParams]);
+
   const columns: ColumnDef<DataContractListItem>[] = [
     {
       accessorKey: "name",
@@ -480,7 +493,7 @@ export default function DataContracts() {
       ) : (
         <DataTable
           columns={columns}
-          data={contracts}
+          data={filteredContracts}
           searchColumn="name"
           storageKey="data-contracts-sort"
           toolbarActions={

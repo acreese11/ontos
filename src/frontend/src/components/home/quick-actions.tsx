@@ -1,58 +1,121 @@
 import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Link } from 'react-router-dom';
 import { usePermissions } from '@/stores/permissions-store';
 import { FeatureAccessLevel } from '@/types/settings';
+import { features, type FeatureGroup } from '@/config/features';
 
-interface QuickAction { name: string; path: string; }
+interface QuickAction {
+  name: string;
+  path: string;
+  group: FeatureGroup;
+  featureId: string;
+}
 
 export default function QuickActions() {
-  const { t } = useTranslation('home');
+  const { t } = useTranslation(['home', 'features']);
   const { isLoading: permissionsLoading, hasPermission } = usePermissions();
 
   const actions: QuickAction[] = useMemo(() => {
     if (permissionsLoading) return [];
     const list: QuickAction[] = [];
-    // Consumer
-    if (hasPermission('data-products', FeatureAccessLevel.READ_ONLY)) list.push({ name: t('quickActions.actions.browseProducts'), path: '/data-products' });
-    if (hasPermission('semantic-models', FeatureAccessLevel.READ_ONLY)) list.push({ name: t('quickActions.actions.browseGlossary'), path: '/semantic-models' });
-    // Producer
-    if (hasPermission('data-products', FeatureAccessLevel.READ_WRITE)) list.push({ name: t('quickActions.actions.createProduct'), path: '/data-products' });
-    if (hasPermission('data-contracts', FeatureAccessLevel.READ_WRITE)) list.push({ name: t('quickActions.actions.defineContract'), path: '/data-contracts' });
-    // Steward/Security/Admin
-    if (hasPermission('data-asset-reviews', FeatureAccessLevel.READ_ONLY)) list.push({ name: t('quickActions.actions.reviewAssets'), path: '/data-asset-reviews' });
-    if (hasPermission('entitlements', FeatureAccessLevel.READ_ONLY)) list.push({ name: t('quickActions.actions.manageEntitlements'), path: '/entitlements' });
-    if (hasPermission('catalog-commander', FeatureAccessLevel.READ_ONLY)) list.push({ name: t('quickActions.actions.catalogCommander'), path: '/catalog-commander' });
-    if (hasPermission('settings', FeatureAccessLevel.ADMIN)) list.push({ name: t('quickActions.actions.settings'), path: '/settings' });
+    const addedFeatures = new Set<string>();
+
+    // Map features to quick actions based on permissions
+    const actionMapping: { featureId: string; requiredLevel: FeatureAccessLevel; action: string }[] = [
+      // Discover - Browse actions for read-only
+      { featureId: 'marketplace', requiredLevel: FeatureAccessLevel.READ_ONLY, action: 'browse' },
+      { featureId: 'data-catalog', requiredLevel: FeatureAccessLevel.READ_ONLY, action: 'browse' },
+      { featureId: 'search', requiredLevel: FeatureAccessLevel.READ_ONLY, action: 'search' },
+
+      // Build - Create/Define actions (prefer write over read)
+      { featureId: 'data-products', requiredLevel: FeatureAccessLevel.READ_WRITE, action: 'create' },
+      { featureId: 'data-contracts', requiredLevel: FeatureAccessLevel.READ_WRITE, action: 'define' },
+      { featureId: 'concepts', requiredLevel: FeatureAccessLevel.READ_WRITE, action: 'create' },
+      { featureId: 'assets', requiredLevel: FeatureAccessLevel.READ_WRITE, action: 'manage' },
+
+      // Build - Fallback to browse if no write access
+      { featureId: 'data-products', requiredLevel: FeatureAccessLevel.READ_ONLY, action: 'browse' },
+      { featureId: 'concepts', requiredLevel: FeatureAccessLevel.READ_ONLY, action: 'browse' },
+
+      // Govern
+      { featureId: 'data-asset-reviews', requiredLevel: FeatureAccessLevel.READ_ONLY, action: 'review' },
+      { featureId: 'entitlements', requiredLevel: FeatureAccessLevel.READ_ONLY, action: 'manage' },
+      { featureId: 'compliance', requiredLevel: FeatureAccessLevel.READ_ONLY, action: 'monitor' },
+
+      // Deploy
+      { featureId: 'catalog-commander', requiredLevel: FeatureAccessLevel.READ_ONLY, action: 'open' },
+      { featureId: 'estate-manager', requiredLevel: FeatureAccessLevel.READ_ONLY, action: 'manage' },
+    ];
+
+    actionMapping.forEach(({ featureId, requiredLevel, action }) => {
+      const feature = features.find(f => f.id === featureId || f.permissionId === featureId);
+      if (feature && hasPermission(feature.permissionId || feature.id, requiredLevel)) {
+        // Skip if we already added an action for this feature (prefer write actions)
+        if (addedFeatures.has(featureId)) return;
+
+        const actionName = action.charAt(0).toUpperCase() + action.slice(1);
+        list.push({
+          name: `${actionName} ${feature.name}`,
+          path: feature.path,
+          group: feature.group,
+          featureId: feature.id,
+        });
+        addedFeatures.add(featureId);
+      }
+    });
+
     return list;
-  }, [permissionsLoading, hasPermission, t]);
+  }, [permissionsLoading, hasPermission]);
+
+  // Group actions by feature group
+  const groupedActions = useMemo(() => {
+    const groups: { [key in FeatureGroup]?: QuickAction[] } = {};
+    actions.forEach(action => {
+      if (!groups[action.group]) {
+        groups[action.group] = [];
+      }
+      groups[action.group]!.push(action);
+    });
+    return groups;
+  }, [actions]);
+
+  const groupOrder: FeatureGroup[] = ['Discover', 'Build', 'Govern', 'Deploy'];
+  const visibleGroups = groupOrder.filter(group => groupedActions[group]?.length);
+
+  if (permissionsLoading) {
+    return <div className="text-sm text-muted-foreground">{t('home:quickActions.loading')}</div>;
+  }
+
+  if (actions.length === 0) {
+    return <div className="text-sm text-muted-foreground">{t('home:quickActions.noActions')}</div>;
+  }
 
   return (
-    <div>
-      <h2 className="text-2xl font-semibold mb-4">{t('quickActions.title')}</h2>
-      <Card>
-        <CardContent className="p-6">
-          {permissionsLoading ? (
-            <div className="text-sm text-muted-foreground">{t('quickActions.loading')}</div>
-          ) : actions.length === 0 ? (
-            <div className="text-sm text-muted-foreground">{t('quickActions.noActions')}</div>
-          ) : (
-            <ul className="space-y-3">
-              {actions.map((action) => (
-                <li key={action.name}>
-                  <Button variant="link" className="p-0 h-auto" asChild>
-                    <Link to={action.path}>{action.name}</Link>
-                  </Button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </CardContent>
-      </Card>
+    <div className="space-y-4">
+      {visibleGroups.map(groupName => (
+        <div key={groupName}>
+          <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
+            {groupName}
+          </h4>
+          <div className="grid grid-cols-2 gap-2">
+            {groupedActions[groupName]!.map((action) => (
+              <Button
+                key={action.name}
+                variant="outline"
+                size="sm"
+                className="justify-start text-left h-auto py-2 px-3"
+                asChild
+              >
+                <Link to={action.path}>
+                  <span className="truncate text-xs">{action.name}</span>
+                </Link>
+              </Button>
+            ))}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
-
-

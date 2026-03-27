@@ -136,21 +136,14 @@ export default function RequiredActionsSection() {
   };
 
   return (
-    <section className="mb-16">
-      <h2 className="text-2xl font-semibold mb-4">{t('requiredActionsSection.title')}</h2>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Approvals & Actions</CardTitle>
-        </CardHeader>
-        <CardContent className="p-0">
-          {loadingApprovals || isLoading ? (
-            <div className="flex justify-center items-center h-32">{t('requiredActionsSection.loading')}</div>
-          ) : approvalsError ? (
-            <div className="text-sm text-destructive p-6">{approvalsError}</div>
-          ) : unifiedApprovals.length === 0 && actionItems.length === 0 ? (
-            <p className="text-center text-muted-foreground p-12">{t('requiredActionsSection.noActions')}</p>
-          ) : (
+    <>
+      {loadingApprovals || isLoading ? (
+        <div className="flex justify-center items-center h-32 p-6">{t('requiredActionsSection.loading')}</div>
+      ) : approvalsError ? (
+        <div className="text-sm text-destructive p-6">{approvalsError}</div>
+      ) : unifiedApprovals.length === 0 && actionItems.length === 0 ? (
+        <p className="text-center text-muted-foreground p-12">{t('requiredActionsSection.noActions')}</p>
+      ) : (
             <>
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
@@ -283,12 +276,6 @@ export default function RequiredActionsSection() {
               )}
             </>
           )}
-        </CardContent>
-      </Card>
-      <Alert variant="default" className="mt-4">
-        <AlertCircle className="h-4 w-4" />
-        <AlertDescription>{t('requiredActionsSection.alertMessage')}</AlertDescription>
-      </Alert>
 
       {/* Role Request Confirmation Dialog */}
       {dialogPayload && (
@@ -302,7 +289,7 @@ export default function RequiredActionsSection() {
           onDecisionMade={handleCloseDialog}
         />
       )}
-    </section>
+    </>
   );
 }
 

@@ -17,7 +17,7 @@ import { DataProduct, DataProductStatus, DataProductOwner } from '@/types/data-p
 import { useToast } from "@/hooks/use-toast"
 import { Toaster } from "@/components/ui/toaster"
 import { RelativeDate } from '@/components/common/relative-date';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import { DataTable } from "@/components/ui/data-table";
 import DataProductCreateDialog from '@/components/data-products/data-product-create-dialog';
 import EntityInfoDialog from '@/components/metadata/entity-info-dialog';
@@ -85,6 +85,7 @@ export default function DataProducts() {
   const { toast } = useToast();
   const navigate = useNavigate();
   const { pathname } = useLocation();
+  const [searchParams] = useSearchParams();
   const { getDomainIdByName } = useDomains();
   const refreshNotifications = useNotificationsStore((state) => state.refreshNotifications);
   const setStaticSegments = useBreadcrumbStore((state) => state.setStaticSegments);
@@ -192,11 +193,27 @@ export default function DataProducts() {
     setShowMySubscriptions(!showMySubscriptions);
   };
 
-  // Filtered products based on subscription filter
+  // Filtered products based on subscription filter and URL parameters
   const displayedProducts = useMemo(() => {
-    if (!showMySubscriptions) return products;
-    return products.filter(p => mySubscribedProductIds.has(p.id));
-  }, [products, showMySubscriptions, mySubscribedProductIds]);
+    let filtered = products;
+
+    // Apply status filter from URL parameter
+    const statusFilter = searchParams.get('status');
+    if (statusFilter) {
+      const filterLower = statusFilter.toLowerCase();
+      filtered = filtered.filter(p => {
+        const productStatus = (p.status || '').toLowerCase();
+        return productStatus === filterLower;
+      });
+    }
+
+    // Apply subscription filter
+    if (showMySubscriptions) {
+      filtered = filtered.filter(p => mySubscribedProductIds.has(p.id));
+    }
+
+    return filtered;
+  }, [products, showMySubscriptions, mySubscribedProductIds, searchParams]);
 
   // Function to refetch products list
   const fetchProducts = async () => {

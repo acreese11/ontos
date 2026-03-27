@@ -163,6 +163,24 @@ export default function BusinessTermsView() {
     }
   }, []);
 
+  // Handle source URL parameter for filtering
+  useEffect(() => {
+    const sourceParam = searchParams.get('source');
+    if (sourceParam && availableSources.length > 0) {
+      // Show only the specified source, hide all others
+      const sourcesToHide = availableSources.filter(s => s !== sourceParam);
+      sourcesToHide.forEach(source => {
+        if (!hiddenSources.includes(source)) {
+          toggleSource(source);
+        }
+      });
+      // Ensure the target source is visible
+      if (hiddenSources.includes(sourceParam)) {
+        toggleSource(sourceParam);
+      }
+    }
+  }, [searchParams, availableSources, hiddenSources, toggleSource]);
+
   // Fetch properties when toggle is enabled
   const fetchProperties = useCallback(async () => {
     try {
