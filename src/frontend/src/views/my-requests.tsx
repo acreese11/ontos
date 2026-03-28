@@ -76,7 +76,6 @@ function getEntityDetailPath(entityType: string, entityId: string, basePath: str
 function entityTypeLabel(entityType: string): string {
   const key = entityType?.toLowerCase?.() ?? '';
   if (key === 'data_product') return 'Data Product';
-  if (key === 'dataset') return 'Dataset';
   if (key === 'data_contract') return 'Data Contract';
   return entityType;
 }

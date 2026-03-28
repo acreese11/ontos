@@ -21,6 +21,5 @@ from . import user_routes
 from . import workspace_routes
 from . import semantic_models_routes
 from . import self_service_routes
-from . import datasets_routes
 
 

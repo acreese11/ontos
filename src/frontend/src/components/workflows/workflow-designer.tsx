@@ -1196,7 +1196,6 @@ export default function WorkflowDesigner({ workflowId }: WorkflowDesignerProps) 
                             <SelectItem value="validation_passed">Validation Passed</SelectItem>
                             <SelectItem value="product_approved">Product Approved</SelectItem>
                             <SelectItem value="product_rejected">Product Rejected</SelectItem>
-                            <SelectItem value="dataset_updated">Dataset Updated</SelectItem>
                             <SelectItem value="pii_detected">PII Detected</SelectItem>
                           </SelectContent>
                         </Select>

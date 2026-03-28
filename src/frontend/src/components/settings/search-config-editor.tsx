@@ -43,7 +43,6 @@ const ASSET_TYPE_DISPLAY_NAMES: Record<string, string> = {
   'data-product': 'Data Products',
   'data-contract': 'Data Contracts',
   'glossary-term': 'Glossary Terms',
-  'dataset': 'Datasets',
   'data-asset-review': 'Asset Reviews',
   'tag': 'Tags',
   'data-domain': 'Data Domains',

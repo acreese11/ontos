@@ -181,7 +181,6 @@ export const ALL_ENTITY_TYPES: EntityType[] = [
   'view',
   'data_contract',
   'data_product',
-  'dataset',
   'domain',
   'project',
   'access_grant',

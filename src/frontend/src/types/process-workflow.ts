@@ -58,7 +58,6 @@ export type EntityType =
   | 'view'
   | 'data_contract'
   | 'data_product'
-  | 'dataset'
   | 'domain'
   | 'project'
   | 'access_grant'
