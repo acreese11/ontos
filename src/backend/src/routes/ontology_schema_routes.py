@@ -54,6 +54,7 @@ def list_entity_types(
     tier: Optional[str] = Query(None, description="Filter by model tier: 'dedicated' or 'asset'"),
     category: Optional[str] = Query(None, description="Filter by UI category: data, governance, analytics, integration, system"),
     persona: Optional[str] = Query(None, description="Filter by persona visibility: admin, steward, producer, consumer"),
+    lang: Optional[str] = Query(None, description="Preferred language for labels (e.g. 'en', 'de')"),
     db: DBSessionDep = None,
     audit_manager: AuditManagerDep = None,
     current_user: AuditCurrentUserDep = None,
@@ -61,9 +62,9 @@ def list_entity_types(
 ):
     """Return all entity types that have an ontos:modelTier annotation."""
     success = False
-    details = {"params": {"tier": tier, "category": category, "persona": persona}}
+    details = {"params": {"tier": tier, "category": category, "persona": persona, "lang": lang}}
     try:
-        result = manager.get_entity_types(tier=tier, category=category, persona=persona)
+        result = manager.get_entity_types(tier=tier, category=category, persona=persona, lang=lang)
         success = True
         details["count"] = len(result)
         return result
@@ -93,12 +94,13 @@ def list_entity_types(
 def get_entity_type_schema_q(
     request: Request,
     type_iri: str = Query(..., description="Full IRI of the entity type"),
+    lang: Optional[str] = Query(None, description="Preferred language for labels (e.g. 'en', 'de')"),
     db: DBSessionDep = None,
     audit_manager: AuditManagerDep = None,
     current_user: AuditCurrentUserDep = None,
     manager: OntologySchemaManager = Depends(get_ontology_schema_manager),
 ):
-    return _handle_schema(request, type_iri, db, audit_manager, current_user, manager)
+    return _handle_schema(request, type_iri, db, audit_manager, current_user, manager, lang=lang)
 
 
 @router.get(
@@ -109,12 +111,13 @@ def get_entity_type_schema_q(
 def get_entity_type_relationships_q(
     request: Request,
     type_iri: str = Query(..., description="Full IRI of the entity type"),
+    lang: Optional[str] = Query(None, description="Preferred language for labels (e.g. 'en', 'de')"),
     db: DBSessionDep = None,
     audit_manager: AuditManagerDep = None,
     current_user: AuditCurrentUserDep = None,
     manager: OntologySchemaManager = Depends(get_ontology_schema_manager),
 ):
-    return _handle_relationships(request, type_iri, db, audit_manager, current_user, manager)
+    return _handle_relationships(request, type_iri, db, audit_manager, current_user, manager, lang=lang)
 
 
 @router.get(
@@ -125,12 +128,13 @@ def get_entity_type_relationships_q(
 def get_entity_type_hierarchy_q(
     request: Request,
     type_iri: str = Query(..., description="Full IRI of the entity type"),
+    lang: Optional[str] = Query(None, description="Preferred language for labels (e.g. 'en', 'de')"),
     db: DBSessionDep = None,
     audit_manager: AuditManagerDep = None,
     current_user: AuditCurrentUserDep = None,
     manager: OntologySchemaManager = Depends(get_ontology_schema_manager),
 ):
-    return _handle_hierarchy(request, type_iri, db, audit_manager, current_user, manager)
+    return _handle_hierarchy(request, type_iri, db, audit_manager, current_user, manager, lang=lang)
 
 
 # ---------- Path-parameter variants (legacy, with IRI normalisation) ----------
@@ -144,12 +148,13 @@ def get_entity_type_hierarchy_q(
 def get_entity_type_schema(
     request: Request,
     type_iri: str,
+    lang: Optional[str] = Query(None, description="Preferred language for labels (e.g. 'en', 'de')"),
     db: DBSessionDep = None,
     audit_manager: AuditManagerDep = None,
     current_user: AuditCurrentUserDep = None,
     manager: OntologySchemaManager = Depends(get_ontology_schema_manager),
 ):
-    return _handle_schema(request, type_iri, db, audit_manager, current_user, manager)
+    return _handle_schema(request, type_iri, db, audit_manager, current_user, manager, lang=lang)
 
 
 @router.get(
@@ -160,12 +165,13 @@ def get_entity_type_schema(
 def get_entity_type_relationships(
     request: Request,
     type_iri: str,
+    lang: Optional[str] = Query(None, description="Preferred language for labels (e.g. 'en', 'de')"),
     db: DBSessionDep = None,
     audit_manager: AuditManagerDep = None,
     current_user: AuditCurrentUserDep = None,
     manager: OntologySchemaManager = Depends(get_ontology_schema_manager),
 ):
-    return _handle_relationships(request, type_iri, db, audit_manager, current_user, manager)
+    return _handle_relationships(request, type_iri, db, audit_manager, current_user, manager, lang=lang)
 
 
 @router.get(
@@ -176,23 +182,24 @@ def get_entity_type_relationships(
 def get_entity_type_hierarchy(
     request: Request,
     type_iri: str,
+    lang: Optional[str] = Query(None, description="Preferred language for labels (e.g. 'en', 'de')"),
     db: DBSessionDep = None,
     audit_manager: AuditManagerDep = None,
     current_user: AuditCurrentUserDep = None,
     manager: OntologySchemaManager = Depends(get_ontology_schema_manager),
 ):
-    return _handle_hierarchy(request, type_iri, db, audit_manager, current_user, manager)
+    return _handle_hierarchy(request, type_iri, db, audit_manager, current_user, manager, lang=lang)
 
 
 # ---------- Shared handler implementations ----------
 
 
-def _handle_schema(request, type_iri, db, audit_manager, current_user, manager):
+def _handle_schema(request, type_iri, db, audit_manager, current_user, manager, lang=None):
     """Return the field schema (data properties) for a specific entity type."""
     success = False
-    details = {"params": {"type_iri": type_iri}}
+    details = {"params": {"type_iri": type_iri, "lang": lang}}
     try:
-        schema = manager.get_entity_type_schema(type_iri)
+        schema = manager.get_entity_type_schema(type_iri, lang=lang)
         if not schema:
             details["exception"] = {"type": "NotFound", "message": f"Entity type not found: {type_iri}"}
             raise HTTPException(
@@ -216,12 +223,12 @@ def _handle_schema(request, type_iri, db, audit_manager, current_user, manager):
         )
 
 
-def _handle_relationships(request, type_iri, db, audit_manager, current_user, manager):
+def _handle_relationships(request, type_iri, db, audit_manager, current_user, manager, lang=None):
     """Return all outgoing and incoming relationships for an entity type."""
     success = False
-    details = {"params": {"type_iri": type_iri}}
+    details = {"params": {"type_iri": type_iri, "lang": lang}}
     try:
-        result = manager.get_relationships(type_iri)
+        result = manager.get_relationships(type_iri, lang=lang)
         success = True
         details["outgoing_count"] = len(result.outgoing)
         details["incoming_count"] = len(result.incoming)
@@ -238,12 +245,12 @@ def _handle_relationships(request, type_iri, db, audit_manager, current_user, ma
         )
 
 
-def _handle_hierarchy(request, type_iri, db, audit_manager, current_user, manager):
+def _handle_hierarchy(request, type_iri, db, audit_manager, current_user, manager, lang=None):
     """Return the class hierarchy subtree rooted at the given entity type."""
     success = False
-    details = {"params": {"type_iri": type_iri}}
+    details = {"params": {"type_iri": type_iri, "lang": lang}}
     try:
-        result = manager.get_hierarchy(root_iri=type_iri)
+        result = manager.get_hierarchy(root_iri=type_iri, lang=lang)
         success = True
         return result
     except Exception as e:
@@ -268,6 +275,7 @@ def _handle_hierarchy(request, type_iri, db, audit_manager, current_user, manage
 )
 def get_full_hierarchy(
     request: Request,
+    lang: Optional[str] = Query(None, description="Preferred language for labels (e.g. 'en', 'de')"),
     db: DBSessionDep = None,
     audit_manager: AuditManagerDep = None,
     current_user: AuditCurrentUserDep = None,
@@ -275,9 +283,9 @@ def get_full_hierarchy(
 ):
     """Return the complete class hierarchy from ontos:Entity downward."""
     success = False
-    details = {}
+    details = {"params": {"lang": lang}}
     try:
-        result = manager.get_hierarchy()
+        result = manager.get_hierarchy(lang=lang)
         success = True
         return result
     except Exception as e:

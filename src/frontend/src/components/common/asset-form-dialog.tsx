@@ -19,8 +19,10 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Separator } from '@/components/ui/separator';
 import { AssetRead, AssetCreate, AssetUpdate } from '@/types/asset';
 import { EntityFieldDefinition, EntityTypeSchema } from '@/types/ontology-schema';
+import { useTranslation } from 'react-i18next';
 import { useApi } from '@/hooks/use-api';
 import { useToast } from '@/hooks/use-toast';
+import { useFormatLabel } from '@/lib/format-label';
 
 interface AssetFormDialogProps {
   isOpen: boolean;
@@ -81,6 +83,7 @@ export function AssetFormDialog({
 
   const { get: apiGet, post: apiPost, put: apiPut } = useApi();
   const { toast } = useToast();
+  const { i18n } = useTranslation();
   const isEdit = !!asset;
 
   const form = useForm<Record<string, any>>({
@@ -92,7 +95,7 @@ export function AssetFormDialog({
     setSchemaLoading(true);
     try {
       const response = await apiGet<EntityTypeSchema>(
-        `/api/ontology/entity-types/schema?type_iri=${encodeURIComponent(assetTypeIri)}`
+        `/api/ontology/entity-types/schema?type_iri=${encodeURIComponent(assetTypeIri)}&lang=${encodeURIComponent(i18n.language)}`
       );
       if (response.error) throw new Error(response.error);
       setSchema(response.data ?? null);
@@ -101,7 +104,7 @@ export function AssetFormDialog({
     } finally {
       setSchemaLoading(false);
     }
-  }, [assetTypeIri, apiGet]);
+  }, [assetTypeIri, apiGet, i18n.language]);
 
   useEffect(() => {
     if (isOpen && assetTypeIri) {
@@ -338,21 +341,23 @@ export function AssetFormDialog({
 }
 
 function DynamicFormField({ field: f, form }: { field: EntityFieldDefinition; form: any }) {
+  const formatLabel = useFormatLabel();
   const fieldName = `prop_${f.name}`;
+  const label = formatLabel(f.label);
 
   if (f.field_type === 'select' && f.select_options) {
     return (
       <FormField
         control={form.control}
         name={fieldName}
-        rules={f.is_required ? { required: `${f.label} is required` } : undefined}
+        rules={f.is_required ? { required: `${label} is required` } : undefined}
         render={({ field }) => (
           <FormItem>
-            <FormLabel>{f.label}{f.is_required ? ' *' : ''}</FormLabel>
+            <FormLabel>{label}{f.is_required ? ' *' : ''}</FormLabel>
             <Select onValueChange={field.onChange} value={field.value || ''}>
               <FormControl>
                 <SelectTrigger>
-                  <SelectValue placeholder={`Select ${f.label.toLowerCase()}`} />
+                  <SelectValue placeholder={`Select ${label.toLowerCase()}`} />
                 </SelectTrigger>
               </FormControl>
               <SelectContent>
@@ -374,13 +379,13 @@ function DynamicFormField({ field: f, form }: { field: EntityFieldDefinition; fo
       <FormField
         control={form.control}
         name={fieldName}
-        rules={f.is_required ? { required: `${f.label} is required` } : undefined}
+        rules={f.is_required ? { required: `${label} is required` } : undefined}
         render={({ field }) => (
           <FormItem>
-            <FormLabel>{f.label}{f.is_required ? ' *' : ''}</FormLabel>
+            <FormLabel>{label}{f.is_required ? ' *' : ''}</FormLabel>
             <FormControl>
               <Textarea
-                placeholder={f.comment || `Enter ${f.label.toLowerCase()}`}
+                placeholder={f.comment || `Enter ${label.toLowerCase()}`}
                 className="min-h-[80px]"
                 {...field}
               />
@@ -407,7 +412,7 @@ function DynamicFormField({ field: f, form }: { field: EntityFieldDefinition; fo
               />
             </FormControl>
             <div className="space-y-1 leading-none">
-              <FormLabel>{f.label}</FormLabel>
+              <FormLabel>{label}</FormLabel>
               {f.comment && <FormDescription>{f.comment}</FormDescription>}
             </div>
           </FormItem>
@@ -425,14 +430,14 @@ function DynamicFormField({ field: f, form }: { field: EntityFieldDefinition; fo
     <FormField
       control={form.control}
       name={fieldName}
-      rules={f.is_required ? { required: `${f.label} is required` } : undefined}
+      rules={f.is_required ? { required: `${label} is required` } : undefined}
       render={({ field }) => (
         <FormItem>
-          <FormLabel>{f.label}{f.is_required ? ' *' : ''}</FormLabel>
+          <FormLabel>{label}{f.is_required ? ' *' : ''}</FormLabel>
           <FormControl>
             <Input
               type={inputType}
-              placeholder={f.comment || `Enter ${f.label.toLowerCase()}`}
+              placeholder={f.comment || `Enter ${label.toLowerCase()}`}
               {...field}
               value={field.value ?? ''}
             />

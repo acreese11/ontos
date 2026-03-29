@@ -28,6 +28,7 @@ import { HierarchyTreeNode } from '@/components/hierarchy/hierarchy-tree-node';
 import { HierarchyGraphView } from '@/components/hierarchy/hierarchy-graph-view';
 import type { InstanceHierarchyNode, HierarchyRootGroup } from '@/types/ontology-schema';
 import { cn } from '@/lib/utils';
+import { useFormatLabel } from '@/lib/format-label';
 
 type DetailViewMode = 'tree' | 'graph';
 
@@ -364,6 +365,7 @@ export default function HierarchyBrowserView() {
 
   const { get: apiGet } = useApi();
   const { hasPermission, isLoading: permissionsLoading } = usePermissions();
+  const formatLabel = useFormatLabel();
   const setStaticSegments = useBreadcrumbStore((state) => state.setStaticSegments);
   const setDynamicTitle = useBreadcrumbStore((state) => state.setDynamicTitle);
 
@@ -555,7 +557,7 @@ export default function HierarchyBrowserView() {
                         <div key={group.entity_type} className="mb-3">
                           <div className="flex items-center gap-2 px-2 py-1.5 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                             <GroupIcon className="h-3.5 w-3.5" />
-                            {group.label}
+                            {formatLabel(group.label)}
                             <span className="ml-auto text-xs font-normal">{group.roots.length}</span>
                           </div>
                           {group.roots.map((root) => (

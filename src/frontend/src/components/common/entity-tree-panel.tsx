@@ -19,6 +19,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { useApi } from '@/hooks/use-api';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
+import { useFormatLabel } from '@/lib/format-label';
 import type { InstanceHierarchyNode } from '@/types/ontology-schema';
 import { AddRelationshipDialog } from '@/components/common/add-relationship-dialog';
 
@@ -265,6 +266,7 @@ function RootTreeNode({
 
   const navigate = useNavigate();
   const { get: apiGet } = useApi();
+  const formatLabel = useFormatLabel();
   const Icon = getIconForType(rootNode.entityType);
   const isIncoming = rootNode.direction === 'incoming';
 
@@ -328,7 +330,7 @@ function RootTreeNode({
 
         {/* Relationship label */}
         <span className="text-[10px] text-muted-foreground flex-shrink-0 hidden sm:inline max-w-40 truncate">
-          {rootNode.relationshipLabel || rootNode.relationshipType}
+          {formatLabel(rootNode.relationshipLabel || rootNode.relationshipType)}
         </span>
 
         {/* Child count (before expansion) */}

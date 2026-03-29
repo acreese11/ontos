@@ -13,6 +13,7 @@ import {
   Group, Ungroup,
 } from 'lucide-react';
 import type { LineageGraph, LineageGraphNode } from '@/types/ontology-schema';
+import { useFormatLabel } from '@/lib/format-label';
 
 // ─── Shared color map — re-exported from lineage constants for backward compat
 export { TYPE_COLOR, DEFAULT_HEX, hexForType } from '@/components/lineage/constants';
@@ -80,7 +81,7 @@ function relationshipsToGraph(raw: any, entityType: string, entityId: string, en
 
 // ─── Cytoscape elements builder ─────────────────────────────────────────
 
-function buildElements(data: LineageGraph, grouped: boolean): ElementDefinition[] {
+function buildElements(data: LineageGraph, grouped: boolean, formatLabel: (s: string | null | undefined) => string): ElementDefinition[] {
   const elements: ElementDefinition[] = [];
   const center = data.nodes.find(n => n.is_center);
   if (!center) return elements;
@@ -141,7 +142,7 @@ function buildElements(data: LineageGraph, grouped: boolean): ElementDefinition[
         id: `e:${e.source}:${e.target}:${e.relationship_type || ''}`,
         source: e.source,
         target: e.target,
-        label: e.label || e.relationship_type || '',
+        label: formatLabel(e.label || e.relationship_type) || '',
       },
       classes: 'rel-edge',
     });
@@ -216,6 +217,7 @@ export function BusinessLineageGraph({
   const layoutRef = useRef<any>(null);
   const initialLayoutDoneRef = useRef(false);
 
+  const formatLabel = useFormatLabel();
   const [graphData, setGraphData] = useState<LineageGraph | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -264,8 +266,8 @@ export function BusinessLineageGraph({
   // Build elements
   const elements = useMemo(() => {
     if (!graphData || graphData.nodes.length === 0) return [];
-    return buildElements(graphData, showGroups);
-  }, [graphData, showGroups]);
+    return buildElements(graphData, showGroups, formatLabel);
+  }, [graphData, showGroups, formatLabel]);
 
   // Cytoscape stylesheet
   const stylesheet = useMemo((): any[] => {
