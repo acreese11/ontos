@@ -47,7 +47,7 @@ class TestDataContractsRoutes:
         return {
             "id": "test-contract-id",
             "kind": "DataContract",
-            "apiVersion": "v3.0.2",
+            "apiVersion": "v3.1.0",
             "version": "1.1.0",
             "status": "active",
             "name": "my quantum",

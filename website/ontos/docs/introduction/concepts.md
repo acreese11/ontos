@@ -28,7 +28,7 @@ Now let's explore concepts related to _data assets and specifications_. These id
 Datasets are defined as logical groupings of related data assets (tables, dimensions, lookups, metrics) that represent the physical reality of data. They can have multiple physical implementations across different systems and environments (multi-platform support), use a unified asset type system, and can implement Data Contracts. In short, a Dataset is the _what exists_ (physical reality).
 
 ## 📝 Data Contracts
-Represent technical specifications and guarantees for data assets, following the ODCS v3.0.2 standard. They define schema (names, types, constraints), data quality rules (SLOs), and semantic links to business concepts. A Data Contract is the _what should exist_ (specification).
+Represent technical specifications and guarantees for data assets, following the ODCS v3.1.0 standard. They define schema (names, types, constraints), data quality rules (SLOs), and semantic links to business concepts. A Data Contract is the _what should exist_ (specification).
 
 ## 📊 Data Products
 Embody curated, consumable collections of Databricks assets (tables, views, models). Data Products are delivered products with defined Input/Output Ports, organized by standardized tags, and progress through various status levels (e.g., Development, Certified).

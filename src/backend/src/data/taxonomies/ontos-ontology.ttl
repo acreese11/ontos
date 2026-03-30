@@ -203,7 +203,7 @@ ontos:OutputPort a rdfs:Class ;
 ontos:DataContract a rdfs:Class ;
     rdfs:subClassOf ontos:GovernanceArtifact ;
     rdfs:label "Data Contract"@en ;
-    rdfs:comment "Formal agreement specifying schema, quality, SLA, and access rules for data. Follows ODCS v3.0.2."@en ;
+    rdfs:comment "Formal agreement specifying schema, quality, SLA, and access rules for data. Follows ODCS v3.1.0."@en ;
     skos:example "Customer Data Contract v1.0, Transaction Event Contract v2.1" ;
     ontos:modelTier "dedicated" ;
     ontos:uiIcon "FileCheck" ;

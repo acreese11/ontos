@@ -101,7 +101,7 @@ Understanding these foundational concepts will help you effectively use Ontos.
 
 ### Data Contracts
 
-**Data Contracts** define the technical specifications and guarantees for data assets following ODCS v3.0.2 standard.
+**Data Contracts** define the technical specifications and guarantees for data assets following ODCS v3.1.0 standard.
 
 - **Schema Definition**: Column names, types, constraints, and descriptions
 - **Quality Guarantees**: Data quality rules and SLOs (Service Level Objectives)
@@ -1127,7 +1127,7 @@ Enhance discoverability with rich metadata:
 
 ## Creating Data Contracts
 
-Data Contracts define formal specifications for data assets following the ODCS v3.0.2 standard.
+Data Contracts define formal specifications for data assets following the ODCS v3.1.0 standard.
 
 ### Why Data Contracts?
 

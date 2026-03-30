@@ -14,7 +14,7 @@ A comprehensive data governance and management platform built for Databricks Uni
 Group and manage related Databricks assets (tables, views, functions, models, dashboards) as cohesive, consumable products with clear ownership and lifecycle management.
 
 ### 📝 Data Contracts
-Define formal specifications for data assets with schema definitions, quality rules, SLOs, and semantic meaning following the ODCS v3.0.2 standard.
+Define formal specifications for data assets with schema definitions, quality rules, SLOs, and semantic meaning following the ODCS v3.1.0 standard.
 
 ### 📦 Datasets
 Register and group existing data assets across systems (Unity Catalog, Snowflake) and environments (dev, staging, prod), bridging physical assets to formal contracts.
@@ -152,7 +152,7 @@ ontos/
 
 Ontos implements and integrates with these standards:
 
-- **[ODCS](https://github.com/bitol-io/open-data-contract-standard)** - Open Data Contract Standard (v3.0.2)
+- **[ODCS](https://github.com/bitol-io/open-data-contract-standard)** - Open Data Contract Standard (v3.1.0)
 - **[ODPS](https://github.com/bitol-io/open-data-product-standard)** - Open Data Product Specification
 - **[MCP](https://modelcontextprotocol.io/)** - Model Context Protocol for AI integration
 - **[RDF](https://www.w3.org/RDF/)** - Resource Description Framework for ontology-driven asset modeling

@@ -1,8 +1,9 @@
 """
 ODCS JSON Schema Validation
 
-This module provides validation utilities for Open Data Contract Standard (ODCS) v3.0.2
-compliance using the official JSON schema.
+This module provides validation utilities for Open Data Contract Standard (ODCS)
+compliance using the official JSON schema. Supports ODCS v3.0.2 and v3.1.0 payloads
+(validated against the v3.1.0 schema which accepts both apiVersion values).
 """
 import json
 import os
@@ -10,13 +11,13 @@ from pathlib import Path
 from typing import Dict, List, Any, Optional
 
 import jsonschema
-from jsonschema import ValidationError, Draft7Validator
+from jsonschema import ValidationError, Draft201909Validator
 from src.common.logging import get_logger
 
 logger = get_logger(__name__)
 
-# Path to the ODCS JSON schema file
-ODCS_SCHEMA_PATH = Path(__file__).parent.parent / "schemas" / "odcs-json-schema-v3.0.2-strict.json"
+# Path to the ODCS JSON schema file (v3.1.0, also validates v3.0.2 payloads)
+ODCS_SCHEMA_PATH = Path(__file__).parent.parent / "schemas" / "odcs-json-schema-v3.1.0.json"
 
 
 class ODCSValidationError(Exception):
@@ -44,8 +45,9 @@ class ODCSValidator:
             with open(ODCS_SCHEMA_PATH, 'r', encoding='utf-8') as f:
                 self._schema = json.load(f)
 
-            # Create validator with Draft7 (as specified in the schema)
-            self._validator = Draft7Validator(self._schema)
+            # Schema uses draft/2019-09 ($schema), which requires Draft201909Validator
+            # for proper support of unevaluatedProperties and other 2019-09 keywords
+            self._validator = Draft201909Validator(self._schema)
 
             logger.info(f"Successfully loaded ODCS schema from {ODCS_SCHEMA_PATH}")
         except Exception as e:
@@ -54,7 +56,7 @@ class ODCSValidator:
 
     def validate(self, contract_data: Dict[str, Any], strict: bool = True) -> bool:
         """
-        Validate a data contract against the ODCS v3.0.2 schema
+        Validate a data contract against the ODCS v3.1.0 schema
 
         Args:
             contract_data: The contract data to validate
@@ -89,7 +91,7 @@ class ODCSValidator:
 
             if strict:
                 raise ODCSValidationError(
-                    f"Contract does not comply with ODCS v3.0.2 specification. Found {len(error_messages)} validation errors.",
+                    f"Contract does not comply with ODCS specification. Found {len(error_messages)} validation errors.",
                     validation_errors=error_messages
                 )
             else:
@@ -146,7 +148,7 @@ def get_odcs_validator() -> ODCSValidator:
 
 def validate_odcs_contract(contract_data: Dict[str, Any], strict: bool = True) -> bool:
     """
-    Convenience function to validate a contract against ODCS v3.0.2
+    Convenience function to validate a contract against ODCS v3.1.0 schema
 
     Args:
         contract_data: The contract data to validate

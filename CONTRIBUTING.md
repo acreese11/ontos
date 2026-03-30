@@ -149,7 +149,7 @@ The scope provides additional context. Common scopes include:
 
 ```bash
 # Feature
-feat(contracts): add schema validation for ODCS v3.0.2
+feat(contracts): add schema validation for ODCS v3.1.0
 
 # Bug fix
 fix(backend): correct date parsing in contract import
