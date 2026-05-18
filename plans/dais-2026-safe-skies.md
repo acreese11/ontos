@@ -89,14 +89,22 @@ Polars + Mimesis generator producing a coherent flight-day across:
 
 Include intentionally-dirty rows tagged for Demo 3 (negative altitude, malformed ICAO).
 
-### Phase 1b — `demo_data_aviation.sql` metadata preset
-Seed the Ontos metadata side:
-- Aviation domain hierarchy
-- Teams (Flight Ops Platform, Operations Analytics, Schedule Planning, etc.)
-- ~8–12 data products with draft/published contracts
-- Owning domains, certification metadata, quality items
+### Phase 1b — Aviation seed via Ontos manager calls (not SQL)
+**Approach decision:** instead of authoring a `demo_data_aviation.sql` like the existing presets, the seed goes through Ontos's manager classes directly so it exercises real business logic, validation, search-index updates, ontology-link mechanics, and notifications. (Reasoning: the existing SQL presets bypass all of these; using managers means the seed both works *and* tests Ontos's actual API surface.)
 
-Plus the 30–50 stub products from recommendation #5.
+Implementation:
+- `src/backend/src/data/aviation/definitions.py` — pure data dicts/lists: domains, teams, ODCS contract definitions (12 real), ODPS products (16 real + 30 stubs), entity-relationship compositions (aggregate composes sources; consumer derives from aggregate), seeded consumer subscriptions.
+- `src/backend/src/data/aviation/seed.py` — `load_aviation_demo(db, *managers, current_user)` orchestrator. Calls `DataDomainManager.create_domain_internal`, `TeamsManager.create_team`, `DataContractsManager.create_from_odcs_dict`, `DataProductsManager.create_product`, `EntityRelationshipsManager.*`, `EntitySubscriptionsManager.*`.
+- New POST `/api/settings/demo-data/load-aviation` endpoint that wires the seed function to FastAPI DI so we get one-click reload during demo prep. Re-runnable on the deployed app via curl.
+
+Outputs into Lakebase `app_ontos_dais` (local) / `app_ontos` (deployed):
+- 8 domains (Flight Ops, Scheduling, Maintenance, Crew, Regulatory, Fuel, Passenger, Reference Data)
+- 13 teams (one per domain plus Operations Analytics, Sustainability Office, Customer Comms Analytics, Operations Ingest)
+- 12 ODCS v3.1 contracts with real schema + quality rules (per `plans/dais-aviation-data-research.md`)
+- 16 real ODPS data products (11 source-aligned, 3 aggregate-aligned, 2 consumer-aligned)
+- ~30 stub products spread across all 8 domains for marketplace density
+- Entity-relationship compositions: Global Flight Ops `composesOf` 5 source-aligned inputs; On-Time Performance `derivesFrom` Global Flight Ops
+- ~5 seeded consumer subscriptions (Customer Comms → Global Flight Ops; Ops Analytics → its source inputs)
 
 ### Phase 2a — Backend AI contract generation pipeline
 1. **Profile** UC table — sample rows, type/null/distinct, distributions, candidate keys
