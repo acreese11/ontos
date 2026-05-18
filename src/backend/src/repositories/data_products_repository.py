@@ -11,6 +11,7 @@ from typing import Iterable, List, Optional, Any, Dict, Set, Union
 import json
 
 from src.common.repository import CRUDBase
+from src.repositories.teams_repository import team_repo as _team_repo
 from src.models.data_products import (
     DataProduct as DataProductApi,
     DataProductCreate,
@@ -45,6 +46,53 @@ from src.db_models.data_products import (
 from src.common.logging import get_logger
 
 logger = get_logger(__name__)
+
+
+def _ensure_owner_in_team(db: Session, db_obj: DataProductDb) -> None:
+    """Materialize Ontos's `owner_team_id` reference into the ODPS-canonical
+    `team[role='owner']` member on the data product.
+
+    Called from both create + update so disk state always carries the standards-compliant
+    `team` body when a product is owned by a team. Idempotent: if the team already has
+    a member with role='owner', this is a no-op.
+    """
+    if not getattr(db_obj, "owner_team_id", None):
+        return
+
+    # Look up the Team entity Ontos is referencing. If we can't resolve, leave alone.
+    try:
+        from uuid import UUID
+        owner_team = _team_repo.get(db, id=UUID(str(db_obj.owner_team_id)))
+    except Exception:
+        owner_team = None
+    if not owner_team or not owner_team.name:
+        return
+
+    team_name = owner_team.name
+    # If the product already has a team body with an owner member, we're done.
+    existing_team = getattr(db_obj, "team", None)
+    if existing_team and existing_team.members:
+        for m in existing_team.members:
+            if (m.role or "").lower() == "owner":
+                return
+
+    synthesized = DataProductTeamMemberDb(
+        username=team_name,
+        name=team_name,
+        role="owner",
+        description="Owner (materialized from owner_team_id reference)",
+    )
+    if existing_team:
+        existing_team.members.append(synthesized)
+        if not existing_team.name:
+            existing_team.name = team_name
+    else:
+        new_team = DataProductTeamDb(
+            name=team_name,
+            description=f"Owning team: {team_name}",
+        )
+        new_team.members.append(synthesized)
+        db_obj.team = new_team
 
 
 class DataProductRepository(CRUDBase[DataProductDb, DataProductCreate, DataProductUpdate]):
@@ -227,6 +275,12 @@ class DataProductRepository(CRUDBase[DataProductDb, DataProductCreate, DataProdu
 
                 db_obj.team = team_obj
 
+            # 9b. Materialize owner_team_id → ODPS team[role='owner'] on write.
+            # Keeps disk state canonical so every read path (UI, exports, external
+            # consumers) sees the standards-compliant shape without needing to know
+            # about Ontos's owner_team_id reference.
+            _ensure_owner_in_team(db, db_obj)
+
             # 10. Persist to database
             db.add(db_obj)
             db.flush()
@@ -283,16 +337,16 @@ class DataProductRepository(CRUDBase[DataProductDb, DataProductCreate, DataProdu
                 db_obj.consumer_principals = json.dumps(cp_serializable) if cp_serializable else None
 
             # 2. Update Structured Description
-            if 'description' in update_data:
+            # Skip when the caller didn't include description, or explicitly sent None
+            # (which model_dump() emits for unset Optional fields). Without this guard
+            # any partial PUT that omits description crashes with NoneType.get().
+            if update_data.get('description') is not None:
+                desc_data = update_data['description']
                 if db_obj.description:
-                    # Update existing
-                    desc_data = update_data['description']
                     db_obj.description.purpose = desc_data.get('purpose', db_obj.description.purpose)
                     db_obj.description.limitations = desc_data.get('limitations', db_obj.description.limitations)
                     db_obj.description.usage = desc_data.get('usage', db_obj.description.usage)
                 else:
-                    # Create new
-                    desc_data = update_data['description']
                     desc_obj = DescriptionDb(
                         purpose=desc_data.get('purpose'),
                         limitations=desc_data.get('limitations'),
@@ -354,8 +408,10 @@ class DataProductRepository(CRUDBase[DataProductDb, DataProductCreate, DataProdu
                         port_obj.name = port_dict['name']
                         port_obj.version = port_dict['version']
                         port_obj.description = port_dict.get('description')
-                        port_obj.port_type = port_dict.get('type')
-                        port_obj.contract_id = port_dict.get('contract_id')
+                        # by_alias=True dumps as 'port_type'; fall back to 'type' for callers
+                        # that send the canonical ODPS field name. Same pattern for contract_id.
+                        port_obj.port_type = port_dict.get('port_type') or port_dict.get('type')
+                        port_obj.contract_id = port_dict.get('contract_id') or port_dict.get('contractId')
                         # Preserve existing delivery_method_id on partial updates: only
                         # write if the caller explicitly included the key. Caller can still
                         # clear the FK by sending an explicit null. Without this guard, any
@@ -389,8 +445,8 @@ class DataProductRepository(CRUDBase[DataProductDb, DataProductCreate, DataProdu
                             name=port_dict['name'],
                             version=port_dict['version'],
                             description=port_dict.get('description'),
-                            port_type=port_dict.get('type'),
-                            contract_id=port_dict.get('contract_id'),
+                            port_type=port_dict.get('port_type') or port_dict.get('type'),
+                            contract_id=port_dict.get('contract_id') or port_dict.get('contractId'),
                             delivery_method_id=port_dict.get('delivery_method_id'),
                             asset_type=port_dict.get('asset_type'),
                             asset_identifier=port_dict.get('asset_identifier'),
@@ -488,6 +544,11 @@ class DataProductRepository(CRUDBase[DataProductDb, DataProductCreate, DataProdu
                                 team_obj.members.append(member_obj)
 
                         db_obj.team = team_obj
+
+            # 9b. Materialize owner_team_id → ODPS team[role='owner'] on write.
+            # Mirrors the create path so a change to owner_team_id keeps the
+            # canonical team body in sync.
+            _ensure_owner_in_team(db, db_obj)
 
             # 10. Persist changes
             db.add(db_obj)
