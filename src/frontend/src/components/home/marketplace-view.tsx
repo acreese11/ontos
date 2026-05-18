@@ -172,13 +172,14 @@ export default function MarketplaceView({ className }: MarketplaceViewProps) {
   useEffect(() => {
     if (domainBrowserStyle === 'graph' && selectedDomainId) {
       loadDomainDetails(selectedDomainId);
-    } else if (domainBrowserStyle === 'graph' && !selectedDomainId && domains.length > 0) {
-      // Auto-select first root domain for graph view
-      const rootDomain = domains.find(d => !d.parent_id) || domains[0];
-      if (rootDomain) {
-        setSelectedDomainId(rootDomain.id);
-      }
+    } else if (domainBrowserStyle === 'graph' && !selectedDomainId) {
+      // Returning to the all-domains overview (e.g. "← All domains" click).
+      // Clear the cached domain details so the drill-in view doesn't linger.
+      setSelectedDomainDetails(null);
     }
+    // Initial graph state intentionally leaves selectedDomainId null so the
+    // user lands on the "all top-level domains" overview and chooses where
+    // to drill in.
   }, [domainBrowserStyle, selectedDomainId, domains, loadDomainDetails]);
 
   // Fade-in effect for graph when domain changes
@@ -602,14 +603,50 @@ export default function MarketplaceView({ className }: MarketplaceViewProps) {
           /* Graph View */
           selectedDomainDetails ? (
             <div className={`transition-opacity duration-300 ${graphFadeIn ? 'opacity-100' : 'opacity-0'}`}>
+              {/* Drill-in: parent + current + children. "All domains" returns to root overview. */}
+              <div className="flex items-center justify-between mb-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setSelectedDomainId(null)}
+                  className="h-7 px-2 gap-1 text-xs"
+                >
+                  ← {t('marketplace.allDomains') || 'All domains'}
+                </Button>
+                <div className="text-xs text-muted-foreground">
+                  {selectedDomainDetails.parent_info
+                    ? `${selectedDomainDetails.parent_info.name} / ${selectedDomainDetails.name}`
+                    : selectedDomainDetails.name}
+                </div>
+              </div>
               <DataDomainMiniGraph
                 currentDomain={selectedDomainDetails}
                 onNodeClick={(id) => setSelectedDomainId(id)}
               />
             </div>
           ) : (
-            <div className="h-[220px] border rounded-lg overflow-hidden bg-muted/20 w-full flex items-center justify-center text-muted-foreground">
-              {t('marketplace.selectDomainForGraph')}
+            /* Default graph view: same mini-graph used for drill-in, with a
+               synthetic "Safe Skies" root whose children are the top-level domains. */
+            <div className={`transition-opacity duration-300 ${graphFadeIn ? 'opacity-100' : 'opacity-0'}`}>
+              <div className="flex items-center justify-end mb-2">
+                <div className="text-xs text-muted-foreground">Safe Skies</div>
+              </div>
+              <DataDomainMiniGraph
+                currentDomain={{
+                  id: '__safe-skies__',
+                  name: 'Safe Skies',
+                  parent_info: null,
+                  children_info: domains
+                    .filter(d => !d.parent_id)
+                    .sort((a, b) => a.name.localeCompare(b.name))
+                    .map(d => ({ id: d.id, name: d.name })),
+                }}
+                onNodeClick={(id) => {
+                  // The synthetic root isn't a real domain; ignore clicks on it.
+                  if (id === '__safe-skies__') return;
+                  setSelectedDomainId(id);
+                }}
+              />
             </div>
           )
         )}
