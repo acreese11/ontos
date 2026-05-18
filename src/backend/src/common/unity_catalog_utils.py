@@ -150,7 +150,15 @@ def sanitize_postgres_identifier(identifier: str, max_length: int = 63) -> str:
     # UUIDs are inherently safe since they follow a strict format
     if is_valid_uuid(identifier):
         return identifier
-    
+
+    # Databricks principal names (user emails like 'first.last@company.com' and SP names
+    # like 'app-xxxxxx ontos') are valid Lakebase PG role names but contain '@', '.', '-',
+    # and spaces that PG identifiers normally disallow. They are always wrapped in
+    # double-quotes when used in DDL, and the SDK is the source of truth (not user input),
+    # so we accept them after verifying no quote/backslash injection chars are present.
+    if re.match(r'^[a-zA-Z0-9_.@\- ]+$', identifier):
+        return identifier
+
     # PostgreSQL allows letters, digits, underscores, and dollar signs
     # Must start with letter or underscore
     if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_$]*$', identifier):
