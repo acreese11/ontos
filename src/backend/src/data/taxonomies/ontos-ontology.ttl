@@ -591,6 +591,28 @@ ontos:hasDataset a owl:ObjectProperty ;
     ontos:uiDisplayContext "tab" ;
     ontos:isHierarchical true .
 
+ontos:composedOf a owl:ObjectProperty ;
+    rdfs:label "composed of"@en ;
+    rdfs:comment "Aggregate-aligned data product is composed of multiple source-aligned data products (data mesh composition pattern)."@en ;
+    rdfs:domain ontos:DataProduct ;
+    rdfs:range ontos:DataProduct ;
+    ontos:uiLabel "Composed Of"@en ;
+    ontos:inverseLabel "Composes"@en ;
+    ontos:cardinality "0..*" ;
+    ontos:uiDisplayContext "tab" ;
+    ontos:isHierarchical true .
+
+ontos:derivedFrom a owl:ObjectProperty ;
+    rdfs:label "derived from"@en ;
+    rdfs:comment "Consumer-aligned data product is derived from an aggregate or source-aligned product (data mesh consumption pattern)."@en ;
+    rdfs:domain ontos:DataProduct ;
+    rdfs:range ontos:DataProduct ;
+    ontos:uiLabel "Derived From"@en ;
+    ontos:inverseLabel "Used By"@en ;
+    ontos:cardinality "0..*" ;
+    ontos:uiDisplayContext "tab" ;
+    ontos:isHierarchical true .
+
 ontos:hasCatalog a owl:ObjectProperty ;
     rdfs:label "has catalog"@en ;
     rdfs:comment "Links a system to a catalog/project/database it contains"@en ;
