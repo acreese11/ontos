@@ -29,6 +29,7 @@ from src.controller.business_roles_manager import BusinessRolesManager
 from src.controller.business_owners_manager import BusinessOwnersManager
 from src.controller.delivery_methods_manager import DeliveryMethodsManager
 from src.controller.ontology_generator_manager import OntologyGeneratorManager
+from src.controller.contract_generator_manager import ContractGeneratorManager
 
 # Import other dependencies needed by these providers
 from src.common.database import get_db
@@ -103,6 +104,17 @@ def get_data_contracts_manager(request: Request) -> DataContractsManager:
         logger.critical("DataContractsManager not found in application state during request!")
         raise HTTPException(status_code=503, detail="Data Contracts service not configured.")
     return manager
+
+def get_contract_generator_manager(request: Request) -> ContractGeneratorManager:
+    """Lazily build a ContractGeneratorManager from app settings + the contracts manager.
+
+    Not stored on app.state because it's a thin wrapper — cheap to create per-request.
+    """
+    settings = getattr(request.app.state, 'settings', None)
+    contracts_mgr = getattr(request.app.state, 'data_contracts_manager', None)
+    if not settings or not contracts_mgr:
+        raise HTTPException(status_code=503, detail="Contract generator dependencies not configured.")
+    return ContractGeneratorManager(settings=settings, contracts_manager=contracts_mgr)
 
 def get_semantic_models_manager(request: Request) -> SemanticModelsManager:
     manager = getattr(request.app.state, 'semantic_models_manager', None)

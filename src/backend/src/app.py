@@ -29,6 +29,7 @@ from src.routes import (
     compliance_routes,
     comments_routes,
     data_asset_reviews_routes,
+    contract_generator_routes,
     data_contracts_routes,
     data_domains_routes,
     data_product_routes,
@@ -329,6 +330,7 @@ tags_routes.register_routes(app)
 costs_routes.register_routes(app)
 quality_routes.register_routes(app)
 data_contracts_routes.register_routes(app)
+contract_generator_routes.register_routes(app)
 data_product_routes.register_routes(app)
 from src.routes import approvals_routes
 approvals_routes.register_routes(app)
