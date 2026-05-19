@@ -200,6 +200,8 @@ def create_default_registry() -> ToolRegistry:
         SearchDataContractsTool,
         GetDataContractTool,
         CreateDraftDataContractTool,
+        GenerateContractFromTableTool,
+        FindAssetsForTableTool,
         UpdateDataContractTool,
         DeleteDataContractTool
     )
@@ -267,10 +269,12 @@ def create_default_registry() -> ToolRegistry:
     registry.register(UpdateDataProductTool())
     registry.register(DeleteDataProductTool())
     
-    # Data Contracts tools (full CRUD)
+    # Data Contracts tools (full CRUD + AI generation + cross-asset discovery)
     registry.register(SearchDataContractsTool())
     registry.register(GetDataContractTool())
     registry.register(CreateDraftDataContractTool())
+    registry.register(GenerateContractFromTableTool())
+    registry.register(FindAssetsForTableTool())
     registry.register(UpdateDataContractTool())
     registry.register(DeleteDataContractTool())
     

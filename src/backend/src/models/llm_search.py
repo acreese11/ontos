@@ -33,10 +33,12 @@ class ToolName(str, Enum):
     UPDATE_DATA_PRODUCT = "update_data_product"
     DELETE_DATA_PRODUCT = "delete_data_product"
     
-    # Data Contracts (full CRUD)
+    # Data Contracts (full CRUD + AI generation from real UC tables)
     SEARCH_DATA_CONTRACTS = "search_data_contracts"
     GET_DATA_CONTRACT = "get_data_contract"
     CREATE_DRAFT_DATA_CONTRACT = "create_draft_data_contract"
+    GENERATE_CONTRACT_FROM_TABLE = "generate_contract_from_table"
+    FIND_ASSETS_FOR_TABLE = "find_assets_for_table"
     UPDATE_DATA_CONTRACT = "update_data_contract"
     DELETE_DATA_CONTRACT = "delete_data_contract"
     

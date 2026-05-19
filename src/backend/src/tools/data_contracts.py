@@ -362,6 +362,259 @@ class CreateDraftDataContractTool(BaseTool):
             return ToolResult(success=False, error=f"{type(e).__name__}: {str(e)}")
 
 
+class FindAssetsForTableTool(BaseTool):
+    """Find all contracts and products that reference a specific Unity Catalog table.
+
+    Walks two relationships:
+      1. Contracts whose schema includes a SchemaObject with physical_name = catalog.schema.table
+      2. Products whose output ports either directly reference catalog.schema.table
+         (OutputPortDb.asset_identifier) OR reference a matching contract (OutputPortDb.contract_id)
+    """
+
+    name = "find_assets_for_table"
+    category = "data_contracts"
+    description = (
+        "PREFERRED tool for any question that names a specific Unity Catalog table by its three-part "
+        "name (catalog.schema.table). Use this FIRST — do NOT use search_data_contracts or "
+        "search_data_products for table-by-name questions; they match only on free-text fields and "
+        "will miss structural references. This tool walks the database joins and finds every contract "
+        "whose schema references the table AND every product whose output port references the table "
+        "(directly or via a linked contract). Required before drafting a new contract/product to avoid "
+        "duplicates. Trigger phrases: 'what contracts/products exist for X', 'is X covered', "
+        "'is X already governed', 'find assets for X', 'who owns X'."
+    )
+    parameters = {
+        "catalog": {"type": "string", "description": "Unity Catalog catalog name (e.g., 'safe_skies')"},
+        "schema": {"type": "string", "description": "Schema name within the catalog (e.g., 'fuel')"},
+        "table": {"type": "string", "description": "Table name (e.g., 'fuel_uplifts')"},
+    }
+    required_params = ["catalog", "schema", "table"]
+    required_scope = "contracts:read"
+
+    async def execute(
+        self,
+        ctx: ToolContext,
+        catalog: str,
+        schema: str,
+        table: str,
+    ) -> ToolResult:
+        fq = f"{catalog}.{schema}.{table}"
+        logger.info(f"[find_assets_for_table] {fq}")
+        try:
+            from src.db_models.data_contracts import DataContractDb, SchemaObjectDb
+            from src.db_models.data_products import DataProductDb, OutputPortDb
+
+            # 1. Contracts whose schemas reference this physical table.
+            contract_rows = (
+                ctx.db.query(DataContractDb, SchemaObjectDb)
+                .join(SchemaObjectDb, SchemaObjectDb.contract_id == DataContractDb.id)
+                .filter(SchemaObjectDb.physical_name == fq)
+                .all()
+            )
+            contracts_by_id: Dict[str, Dict[str, Any]] = {}
+            for c, s in contract_rows:
+                cid = str(c.id)
+                if cid in contracts_by_id:
+                    continue
+                contracts_by_id[cid] = {
+                    "contract_id": cid,
+                    "name": c.name,
+                    "version": c.version,
+                    "status": c.status,
+                    "domain_id": c.domain_id,
+                    "matched_schema_name": s.name,
+                }
+            contracts = list(contracts_by_id.values())
+
+            # 2a. Products with an OutputPort.asset_identifier directly equal to the table.
+            direct_ports = (
+                ctx.db.query(DataProductDb, OutputPortDb)
+                .join(OutputPortDb, OutputPortDb.product_id == DataProductDb.id)
+                .filter(OutputPortDb.asset_identifier == fq)
+                .all()
+            )
+
+            # 2b. Products with an OutputPort.contract_id matching any of the matched contracts.
+            contract_ids = list(contracts_by_id.keys())
+            indirect_ports = []
+            if contract_ids:
+                indirect_ports = (
+                    ctx.db.query(DataProductDb, OutputPortDb)
+                    .join(OutputPortDb, OutputPortDb.product_id == DataProductDb.id)
+                    .filter(OutputPortDb.contract_id.in_(contract_ids))
+                    .all()
+                )
+
+            products_by_id: Dict[str, Dict[str, Any]] = {}
+            for p, port in direct_ports:
+                pid = str(p.id)
+                products_by_id[pid] = {
+                    "product_id": pid,
+                    "name": p.name,
+                    "status": p.status,
+                    "domain": p.domain,
+                    "match_via": "output_port_asset_identifier",
+                    "matched_port_name": port.name,
+                }
+            for p, port in indirect_ports:
+                pid = str(p.id)
+                if pid in products_by_id:
+                    # Direct match already recorded; upgrade match_via to note both
+                    products_by_id[pid]["match_via"] = "output_port_asset_identifier+contract"
+                    continue
+                products_by_id[pid] = {
+                    "product_id": pid,
+                    "name": p.name,
+                    "status": p.status,
+                    "domain": p.domain,
+                    "match_via": "contract_link",
+                    "matched_port_name": port.name,
+                    "matched_contract_id": port.contract_id,
+                }
+            products = list(products_by_id.values())
+
+            return ToolResult(
+                success=True,
+                data={
+                    "table": fq,
+                    "contract_count": len(contracts),
+                    "product_count": len(products),
+                    "contracts": contracts,
+                    "products": products,
+                    "message": (
+                        f"Found {len(contracts)} contract(s) and {len(products)} product(s) "
+                        f"referencing {fq}."
+                        if (contracts or products)
+                        else f"No contracts or products currently reference {fq}."
+                    ),
+                },
+            )
+        except Exception as e:
+            logger.error(f"[find_assets_for_table] FAILED: {type(e).__name__}: {e}", exc_info=True)
+            return ToolResult(success=False, error=f"{type(e).__name__}: {str(e)}")
+
+
+class GenerateContractFromTableTool(BaseTool):
+    """Inspect a real Unity Catalog table and AI-generate a materially-complete ODCS draft contract.
+
+    Different from `create_draft_data_contract`: this tool actually queries the source table —
+    schema via UC, 20-row sample + per-column null/distinct/top-values stats via the warehouse —
+    then feeds that grounded context into the LLM and persists a draft. Prefer this tool when the
+    user references an existing UC table by name. Use `create_draft_data_contract` only when no
+    real table exists yet (greenfield / hypothetical contracts).
+    """
+
+    name = "generate_contract_from_table"
+    category = "data_contracts"
+    description = (
+        "Generate a materially-complete draft data contract from a real Unity Catalog table by "
+        "inspecting its schema, sampling rows, and computing column statistics. Produces ODCS v3.1 "
+        "with grounded quality rules, classifications, SLA, roles, team, and support — all populated "
+        "from observed data. Persists as a 'draft' contract for review. PREFER this tool whenever the "
+        "user references an existing catalog.schema.table; only fall back to `create_draft_data_contract` "
+        "for hypothetical contracts where no table exists yet."
+    )
+    parameters = {
+        "catalog": {"type": "string", "description": "Unity Catalog catalog name (e.g., 'safe_skies')"},
+        "schema": {"type": "string", "description": "Schema name within the catalog (e.g., 'flight_ops')"},
+        "table": {"type": "string", "description": "Table name (e.g., 'metar_weather')"},
+        "sample_size": {
+            "type": "integer",
+            "description": "Number of sample rows to feed the LLM (default 20, max 200)",
+            "default": 20,
+        },
+        "force": {
+            "type": "boolean",
+            "description": (
+                "Set true to regenerate even if a contract for this table already exists. "
+                "By default the tool detects existing contracts and returns them instead of "
+                "drafting a duplicate. Only force when the user has explicitly asked to redraft."
+            ),
+            "default": False,
+        },
+    }
+    required_params = ["catalog", "schema", "table"]
+    required_scope = "contracts:write"
+
+    async def execute(
+        self,
+        ctx: ToolContext,
+        catalog: str,
+        schema: str,
+        table: str,
+        sample_size: int = 20,
+        force: bool = False,
+    ) -> ToolResult:
+        logger.info(f"[generate_contract_from_table] {catalog}.{schema}.{table} (n={sample_size}, force={force})")
+        if not ctx.data_contracts_manager:
+            return ToolResult(success=False, error="Data contracts manager not available")
+        if not ctx.settings:
+            return ToolResult(success=False, error="Settings not available in tool context")
+        try:
+            from src.controller.contract_generator_manager import ContractGeneratorManager
+
+            generator = ContractGeneratorManager(
+                settings=ctx.settings,
+                contracts_manager=ctx.data_contracts_manager,
+            )
+            result = generator.generate_and_save(
+                db=ctx.db,
+                catalog=catalog,
+                schema=schema,
+                table=table,
+                sample_size=min(max(int(sample_size or 20), 1), 200),
+                current_user=None,
+                user_token=None,
+                force=bool(force),
+            )
+            # Existing-contract short-circuit: surface the existing draft and a
+            # "rerun with force=true" hint so the agent can prompt the user.
+            if result.get("already_exists"):
+                existing = result.get("existing", [])
+                first = existing[0] if existing else {}
+                return ToolResult(
+                    success=True,
+                    data={
+                        "success": True,
+                        "already_exists": True,
+                        "existing": existing,
+                        "contract_id": first.get("contract_id"),
+                        "name": first.get("name"),
+                        "status": first.get("status"),
+                        "url": f"/data-contracts/{first.get('contract_id')}" if first.get("contract_id") else None,
+                        "message": result.get("message"),
+                        "hint": "Tell the user the contract already exists. Only call this tool again with force=true if they explicitly ask to regenerate / overwrite.",
+                    },
+                )
+            contract = result.get("contract", {})
+            schemas = contract.get("schema", []) or []
+            return ToolResult(
+                success=True,
+                data={
+                    "success": True,
+                    "already_exists": False,
+                    "contract_id": result["contract_id"],
+                    "name": contract.get("name"),
+                    "status": contract.get("status"),
+                    "domain": contract.get("domain"),
+                    "schema_count": len(schemas),
+                    "property_count": sum(len(s.get("properties", [])) for s in schemas),
+                    "quality_rule_count": len(contract.get("qualityRules", []) or []),
+                    "duration_seconds": round(result.get("duration_seconds", 0), 1),
+                    "warnings": result.get("warnings", []),
+                    "url": f"/data-contracts/{result['contract_id']}?ai-draft=true",
+                    "message": (
+                        f"Draft contract '{contract.get('name')}' generated from "
+                        f"{catalog}.{schema}.{table} in {round(result.get('duration_seconds', 0), 1)}s. "
+                        f"Open in the editor to review and save."
+                    ),
+                },
+            )
+        except Exception as e:
+            logger.error(f"[generate_contract_from_table] FAILED: {type(e).__name__}: {e}", exc_info=True)
+            return ToolResult(success=False, error=f"{type(e).__name__}: {str(e)}")
+
+
 class UpdateDataContractTool(BaseTool):
     """Update an existing data contract's properties."""
     
