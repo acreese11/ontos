@@ -184,8 +184,11 @@ const TagSelector: React.FC<TagSelectorProps> = ({
         </div>
       )}
 
-      {/* Tag selector */}
-      <Popover open={open} onOpenChange={setOpen}>
+      {/* Tag selector. modal={true} so the popover owns its own pointer/focus
+          context when rendered inside a Radix Dialog — without this the dialog
+          steals pointer-down-outside events (breaking tag selection) and locks
+          wheel scroll (breaking list scrolling). */}
+      <Popover open={open} onOpenChange={setOpen} modal={true}>
         <PopoverTrigger asChild>
           <Button
             variant="outline"
@@ -214,11 +217,7 @@ const TagSelector: React.FC<TagSelectorProps> = ({
               value={searchValue}
               onValueChange={setSearchValue}
             />
-            <div 
-              className="max-h-60 overflow-y-auto"
-              onWheel={(e) => e.stopPropagation()}
-            >
-              <CommandList>
+            <CommandList>
                 {loading ? (
                   <CommandEmpty>Loading tags...</CommandEmpty>
                 ) : (
@@ -279,8 +278,7 @@ const TagSelector: React.FC<TagSelectorProps> = ({
                     )}
                   </>
                 )}
-              </CommandList>
-            </div>
+            </CommandList>
           </Command>
         </PopoverContent>
       </Popover>

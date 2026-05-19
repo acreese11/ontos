@@ -1042,7 +1042,7 @@ const DataProductFormDialog: React.FC<DataProductFormDialogProps> = ({
                                               control={control}
                                               rules={{ required: "Source Table is required" }}
                                               render={({ field: controllerField }) => (
-                                                <Popover open={isComboboxOpen[field.id] ?? false} onOpenChange={(open) => handleComboboxOpenChange(open, field.id)}>
+                                                <Popover open={isComboboxOpen[field.id] ?? false} onOpenChange={(open) => handleComboboxOpenChange(open, field.id)} modal={true}>
                                                   <PopoverTrigger asChild>
                                                       <Button
                                                         variant="outline"
