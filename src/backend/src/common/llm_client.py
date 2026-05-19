@@ -63,6 +63,24 @@ def create_openai_client(
             logger.debug("Could not get token from SDK config: %s", sdk_err)
 
     if not token:
+        # Final fallback: borrow auth from the app's configured WorkspaceClient.
+        # Local dev typically sets DATABRICKS_CONFIG_PROFILE in .env but doesn't push
+        # it to os.environ, so a bare Config() above can't see it. The shared
+        # workspace client builder applies the profile/host from settings explicitly,
+        # and its .config.authenticate() returns a usable bearer header.
+        try:
+            from src.common.workspace_client import get_workspace_client
+
+            ws = get_workspace_client(settings)
+            headers = ws.config.authenticate() or {}
+            auth_header = headers.get("Authorization", "")
+            if auth_header.startswith("Bearer "):
+                token = auth_header[7:]
+                logger.info("Using token from app workspace client config")
+        except Exception as ws_err:
+            logger.debug("Could not derive token from workspace client: %s", ws_err)
+
+    if not token:
         raise RuntimeError(
             "No authentication token available. "
             "Pass a user_token, set DATABRICKS_TOKEN, or configure the Databricks SDK."
