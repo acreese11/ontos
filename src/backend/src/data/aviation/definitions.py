@@ -132,16 +132,45 @@ TEAMS: list[dict[str, Any]] = [
 CATALOG = "safe_skies"
 
 
+def _schema_entry(
+    *,
+    name: str,
+    server_path: str,
+    properties: list,
+    description: str = None,
+    business_name: str = None,
+    tags: list[str] = None,
+) -> dict:
+    """One physical-table schema entry inside a contract's schemas list.
+
+    Use multiple of these inside a single contract when several tables share a
+    trust boundary (same release cadence, same SLA, same owning team).
+    """
+    return {
+        "name": name,
+        "physicalName": server_path,
+        "physicalType": "table",
+        "description": description or f"Physical Delta table: {server_path}. Promoted from bronze via DQX-enforced contract.",
+        "businessName": business_name or name.replace("_", " ").title(),
+        "tags": tags or [],
+        "properties": properties,
+    }
+
+
 def _contract(
     *,
     name: str,
     version: str,
     owner_team: str,
     description: str,
-    server_path: str,
-    schema_props: list,
     quality: list,
     tags: list[str],
+    # Single-schema shorthand (the common case):
+    server_path: str = None,
+    schema_props: list = None,
+    # Multi-schema option: pass a list of _schema_entry() dicts here when the
+    # contract spans multiple tables that travel together.
+    schemas: list = None,
     domain: str = None,
     business_purpose: str = None,
     usage_notes: str = None,
@@ -156,11 +185,26 @@ def _contract(
 ) -> dict:
     """Build a materially-complete ODCS v3.1 dict for the rich create method.
 
-    Every contract gets: description, schema with physicalName, quality rules,
-    servers (with catalog/schema/database properties), tags, roles, team members,
-    support channels, SLA properties, and custom properties. No silent drops.
+    Every contract gets: description, schema(s) with physicalName, quality rules,
+    servers (with catalog/schema properties), tags, roles, team members,
+    support channels, SLA properties, and custom properties.
     """
-    catalog, schema_name, table_name = server_path.split(".")
+    # Resolve schema list. Multi-schema takes precedence when provided.
+    if schemas is None:
+        if server_path is None or schema_props is None:
+            raise ValueError(f"Contract '{name}' needs either schemas=[...] or both server_path and schema_props")
+        schemas = [_schema_entry(
+            name=server_path.split(".")[-1],
+            server_path=server_path,
+            properties=schema_props,
+            business_name=name.replace("_", " ").title(),
+            tags=tags,
+        )]
+
+    # Derive server connectivity from the first schema (all schemas in a contract
+    # are assumed to live in the same catalog.schema).
+    first_path = schemas[0]["physicalName"]
+    catalog, schema_name, _ = first_path.split(".")
     purpose = business_purpose or description
     return {
         "kind": "DataContract",
@@ -181,24 +225,13 @@ def _contract(
             {
                 "server": f"databricks-warehouse-{catalog}",
                 "type": "databricks",
-                "description": f"Production Databricks workspace serving {server_path}",
+                "description": f"Production Databricks workspace serving {catalog}.{schema_name}",
                 "environment": "prod",
                 "catalog": catalog,
                 "schema": schema_name,
-                "database": table_name,
             }
         ],
-        "schema": [
-            {
-                "name": table_name,
-                "physicalName": server_path,
-                "physicalType": "table",
-                "description": f"Physical Delta table: {server_path}. Promoted from bronze via DQX-enforced contract.",
-                "businessName": name.replace("_", " ").title(),
-                "tags": tags,
-                "properties": schema_props,
-            }
-        ],
+        "schema": schemas,
         "qualityRules": quality,
         "roles": [
             {
@@ -241,7 +274,7 @@ def _contract(
             {"channel": "docs", "url": f"https://docs.safe-skies.demo/products/{name}", "description": "Product documentation"},
         ],
         "slaProperties": [
-            {"property": "freshness", "value": str(sla_freshness_minutes), "unit": "minutes", "element": f"{server_path}.ts_utc"},
+            {"property": "freshness", "value": str(sla_freshness_minutes), "unit": "minutes", "element": f"{first_path}.ts_utc"},
             {"property": "latency", "value": str(sla_latency_seconds), "unit": "seconds"},
             {"property": "retention", "value": str(retention_days), "unit": "days"},
             {"property": "frequencyOfChange", "value": refresh_frequency, "unit": "policy"},
@@ -426,138 +459,213 @@ FLIGHT_SCHEDULE_CONTRACT = _contract(
 )
 
 
-# ───── flight_status_events ─────
+# ───── flight_status_events (3 schemas in 1 contract) ─────
+# The raw event stream + two derived views, all materialized by the same job
+# and versioned together. The two derived views are filter projections of the
+# raw table, so they share trust lineage.
 FLIGHT_STATUS_CONTRACT = _contract(
     name="flight_status_events",
     version="1.0.0",
     owner_team="flight-ops-platform",
     domain="Flight Ops",
-    description="OOOI (Out, Off, On, In) and irregular operations events per flight. Real-time within ~6 seconds.",
-    server_path=f"{CATALOG}.flight_ops.flight_status",
-    schema_props=[
-        _prop("event_id", "string", required=True, unique=True),
-        _prop("flight_key", "string", required=True, description="FK to flight_schedule"),
-        _prop("event_type", "string", required=True, enum=["OUT", "OFF", "ON", "IN", "CANCELLED", "DIVERTED", "DELAYED"]),
-        _prop("event_ts_utc", "date", required=True),
-        _prop("delay_minutes", "integer", min_=-60, max_=720),
-        _prop("delay_reason_code", "string"),
-        _prop("dep_gate", "string"),
-        _prop("arr_gate", "string"),
-        _prop("dep_terminal", "string"),
-        _prop("diverted_airport_iata", "string", pattern=r"^[A-Z]{3}$"),
-        _prop("data_source", "string", enum=["SCHEDULED", "AIRPORT", "AIRLINE", "ASQP", "FS_INFERRED"]),
+    description="OOOI (Out, Off, On, In) and irregular-operations events per flight. Real-time within ~6 seconds. One contract exposes the raw stream and two specialized projections (delays-only for OTP analytics, cancellations/diversions for regulatory reporting).",
+    schemas=[
+        _schema_entry(
+            name="flight_status",
+            server_path=f"{CATALOG}.flight_ops.flight_status",
+            business_name="Flight Status Events (raw)",
+            description="Raw event stream — every OOOI/IROP event for every flight.",
+            tags=["status", "ooooi", "raw"],
+            properties=[
+                _prop("event_id", "string", required=True, unique=True),
+                _prop("flight_key", "string", required=True, description="FK to flight_schedule"),
+                _prop("event_type", "string", required=True, enum=["OUT", "OFF", "ON", "IN", "CANCELLED", "DIVERTED", "DELAYED"]),
+                _prop("event_ts_utc", "date", required=True),
+                _prop("delay_minutes", "integer", min_=-60, max_=720),
+                _prop("delay_reason_code", "string"),
+                _prop("dep_gate", "string"),
+                _prop("arr_gate", "string"),
+                _prop("dep_terminal", "string"),
+                _prop("diverted_airport_iata", "string", pattern=r"^[A-Z]{3}$"),
+                _prop("data_source", "string", enum=["SCHEDULED", "AIRPORT", "AIRLINE", "ASQP", "FS_INFERRED"]),
+            ],
+        ),
+        _schema_entry(
+            name="flight_status_delays",
+            server_path=f"{CATALOG}.flight_ops.flight_status_delays",
+            business_name="Flight Delays (projection)",
+            description="Delay-only projection: rows where event_type='DELAYED' with non-null delay_minutes, enriched with delay-category bucket.",
+            tags=["status", "delays", "projection"],
+            properties=[
+                _prop("event_id", "string", required=True, unique=True),
+                _prop("flight_key", "string", required=True),
+                _prop("event_ts_utc", "date", required=True),
+                _prop("delay_minutes", "integer", required=True, min_=0),
+                _prop("delay_reason_code", "string", required=True),
+                _prop("delay_category", "string", enum=["WEATHER", "ATC", "CARRIER", "SECURITY", "LATE_AIRCRAFT", "OTHER"], description="Derived bucket per BTS categorization"),
+            ],
+        ),
+        _schema_entry(
+            name="flight_status_cancellations",
+            server_path=f"{CATALOG}.flight_ops.flight_status_cancellations",
+            business_name="Cancellations & Diversions (projection)",
+            description="Cancellation/diversion-only projection for regulatory reporting and customer-comms.",
+            tags=["status", "cancellations", "regulatory", "projection"],
+            properties=[
+                _prop("event_id", "string", required=True, unique=True),
+                _prop("flight_key", "string", required=True),
+                _prop("event_ts_utc", "date", required=True),
+                _prop("disposition", "string", required=True, enum=["CANCELLED", "DIVERTED"]),
+                _prop("reason_code", "string", required=True),
+                _prop("diverted_airport_iata", "string", pattern=r"^[A-Z]{3}$", description="Only populated for DIVERTED rows"),
+            ],
+        ),
     ],
     quality=[
-        _qrule("delay_minutes_range", "Departures more than 60 min early are unrealistic", rule="delay_minutes >= -60", dimension="validity", must_be_ge=-60),
-        _qrule("cancellation_has_reason", "Cancellations should always carry a reason code (per ICAO recommendation)", rule="event_type != 'CANCELLED' OR delay_reason_code is not null", dimension="completeness", severity="warning"),
+        _qrule("delay_minutes_range", "Departures more than 60 min early are unrealistic", rule="flight_status.delay_minutes >= -60", dimension="validity", must_be_ge=-60),
+        _qrule("cancellation_has_reason", "Cancellations should always carry a reason code (per ICAO recommendation)", rule="flight_status.event_type != 'CANCELLED' OR delay_reason_code is not null", dimension="completeness", severity="warning"),
         _qrule("event_ts_not_future", "Event timestamp cannot be more than 24h in the future", rule="event_ts_utc <= now() + interval 24 hours", dimension="validity"),
-        _qrule("ooooi_ordering", "OOOI events for a single flight must occur in sequence (OUT < OFF < ON < IN)", rule="rolling-window OOOI sequence check per flight_key", dimension="consistency", severity="warning"),
+        _qrule("ooooi_ordering", "OOOI events for a single flight must occur in sequence (OUT < OFF < ON < IN)", rule="rolling-window OOOI sequence check per flight_key in flight_status", dimension="consistency", severity="warning"),
+        _qrule("delays_only_positive", "Delays projection must only contain positive delays", rule="flight_status_delays.delay_minutes > 0", dimension="validity", business_impact="critical"),
+        _qrule("cancel_disposition_in_scope", "Cancellations projection must only contain CANCELLED/DIVERTED dispositions", rule="flight_status_cancellations.disposition in ('CANCELLED','DIVERTED')", dimension="validity", business_impact="critical"),
+        _qrule("diversion_has_airport", "Diversions must specify the diverted-to airport", rule="flight_status_cancellations.disposition != 'DIVERTED' OR diverted_airport_iata is not null", dimension="completeness", business_impact="critical"),
     ],
-    tags=["status", "ooooi", "operational", "source-aligned"],
+    tags=["status", "ooooi", "operational", "source-aligned", "multi-schema"],
 )
 
 
-# ───── metar_observations ─────
-METAR_CONTRACT = _contract(
-    name="metar_observations",
+# ───── aviation_weather (2 schemas in 1 contract) ─────
+# The raw METAR stream and a current-state projection — same source, same team,
+# same SLA, materialized together.
+AVIATION_WEATHER_CONTRACT = _contract(
+    name="aviation_weather",
     version="1.0.0",
     owner_team="operations-ingest",
     domain="Flight Ops",
-    description="Hourly METAR weather observations per airport, parsed from NOAA/NWS raw feeds.",
-    server_path=f"{CATALOG}.flight_ops.metar_weather",
-    schema_props=[
-        _prop("station_id", "string", required=True, pattern=r"^[A-Z]{4}$", semantic="ICAO airport code"),
-        _prop("observation_time_utc", "date", required=True),
-        _prop("wind_direction_deg", "integer", min_=0, max_=360),
-        _prop("wind_speed_kt", "integer", min_=0, max_=100),
-        _prop("wind_gust_kt", "integer"),
-        _prop("visibility_m", "integer", min_=0),
-        _prop("temperature_c", "integer", min_=-50, max_=60),
-        _prop("dew_point_c", "integer"),
-        _prop("altimeter_hpa", "integer", min_=900, max_=1100),
+    description="Aviation weather data per airport, with two output ports: the raw hourly METAR observation stream and a current-state projection (latest obs per station, enriched with derived FAA flight category VFR/MVFR/IFR/LIFR).",
+    schemas=[
+        _schema_entry(
+            name="metar_observations",
+            server_path=f"{CATALOG}.flight_ops.metar_weather",
+            business_name="METAR Observations (raw)",
+            description="Hourly METAR weather observations per airport, parsed from NOAA/NWS raw feeds.",
+            tags=["weather", "metar", "raw"],
+            properties=[
+                _prop("station_id", "string", required=True, pattern=r"^[A-Z]{4}$", semantic="ICAO airport code"),
+                _prop("observation_time_utc", "date", required=True),
+                _prop("wind_direction_deg", "integer", min_=0, max_=360),
+                _prop("wind_speed_kt", "integer", min_=0, max_=100),
+                _prop("wind_gust_kt", "integer"),
+                _prop("visibility_m", "integer", min_=0),
+                _prop("temperature_c", "integer", min_=-50, max_=60),
+                _prop("dew_point_c", "integer"),
+                _prop("altimeter_hpa", "integer", min_=900, max_=1100),
+            ],
+        ),
+        _schema_entry(
+            name="airport_weather_current",
+            server_path=f"{CATALOG}.flight_ops.airport_weather_current",
+            business_name="Current Airport Weather (projection)",
+            description="One row per station with the latest observation, enriched with derived flight category. Tuned for dispatch/ops-control dashboards.",
+            tags=["weather", "current", "projection"],
+            properties=[
+                _prop("station_id", "string", required=True, unique=True, pattern=r"^[A-Z]{4}$"),
+                _prop("observation_time_utc", "date", required=True),
+                _prop("wind_direction_deg", "integer", min_=0, max_=360),
+                _prop("wind_speed_kt", "integer", min_=0, max_=100),
+                _prop("visibility_m", "integer", min_=0),
+                _prop("ceiling_ft", "integer", description="Lowest broken/overcast cloud layer in feet AGL"),
+                _prop("temperature_c", "integer", min_=-50, max_=60),
+                _prop("flight_category", "string", required=True, enum=["VFR", "MVFR", "IFR", "LIFR"], description="Derived per FAA: VFR > 3000ft & >5sm vis, MVFR 1000-3000ft or 3-5sm, IFR 500-1000ft or 1-3sm, LIFR < 500ft or < 1sm"),
+            ],
+        ),
     ],
     quality=[
-        _qrule("dew_point_le_temp", "Dew point can never exceed air temperature (physical impossibility)", rule="dew_point_c <= temperature_c", dimension="validity", business_impact="critical"),
-        _qrule("wind_speed_max", "Sustained wind above 100kt is hurricane-strength and exceedingly rare for airport METAR", rule="wind_speed_kt <= 100", dimension="validity", severity="warning", must_be_le=100),
+        _qrule("dew_point_le_temp", "Dew point can never exceed air temperature (physical impossibility)", rule="metar_observations.dew_point_c <= temperature_c", dimension="validity", business_impact="critical"),
+        _qrule("wind_speed_max", "Sustained wind above 100kt is hurricane-strength and exceedingly rare", rule="metar_observations.wind_speed_kt <= 100", dimension="validity", severity="warning", must_be_le=100),
         _qrule("station_id_format", "Station ID must be a 4-character ICAO airport code", rule="station_id matches '^[A-Z]{4}$'", dimension="validity"),
-        _qrule("observation_freshness", "METAR observations should not be more than 90 minutes stale during active flight ops", rule="now() - observation_time_utc < interval 90 minutes", dimension="freshness", severity="warning"),
+        _qrule("observation_freshness", "METAR observations should not be more than 90 minutes stale during active flight ops", rule="now() - metar_observations.observation_time_utc < interval 90 minutes", dimension="freshness", severity="warning"),
+        _qrule("current_one_row_per_station", "Current projection must have exactly one row per station", rule="airport_weather_current.station_id is unique", dimension="uniqueness", business_impact="critical"),
+        _qrule("current_freshness_60min", "Current projection must be no more than 60 min stale", rule="now() - airport_weather_current.observation_time_utc < interval 60 minutes", dimension="freshness", severity="warning"),
+        _qrule("current_category_derivation", "Flight category must always be derivable from ceiling + visibility", rule="airport_weather_current.flight_category is not null", dimension="completeness"),
     ],
-    tags=["weather", "metar", "operational", "source-aligned"],
+    tags=["weather", "metar", "operational", "source-aligned", "multi-schema"],
 )
 
 
-# ───── aviation_reference (master data) ─────
-AIRPORTS_CONTRACT = _contract(
-    name="airports_master",
+# ───── aviation_reference (master data — 3 schemas in 1 contract) ─────
+# All three reference tables are refreshed by the same monthly job and share
+# a single trust boundary. Consolidating them into one contract keeps versioning,
+# SLA, and stewardship aligned with how the data actually evolves.
+AVIATION_REFERENCE_CONTRACT = _contract(
+    name="aviation_reference",
     version="1.0.0",
     owner_team="data-platform",
     domain="Reference Data",
-    description="Authoritative airport master — ICAO/IATA, location, size class. Updated monthly from OurAirports.",
-    server_path=f"{CATALOG}.reference.airports",
-    schema_props=[
-        _prop("icao", "string", required=True, unique=True, pattern=r"^[A-Z]{4}$", semantic="ICAO airport code"),
-        _prop("iata", "string", required=True, pattern=r"^[A-Z]{3}$", semantic="IATA airport code"),
-        _prop("name", "string", required=True),
-        _prop("city", "string"),
-        _prop("country_iso", "string", required=True, pattern=r"^[A-Z]{2}$", semantic="ISO 3166 alpha-2 country code"),
-        _prop("lat", "number", min_=-90, max_=90),
-        _prop("lon", "number", min_=-180, max_=180),
-        _prop("elevation_ft", "integer"),
-        _prop("size_class", "string", enum=["large", "medium", "small"]),
+    description="Authoritative master data for airports, airlines, and aircraft — the foundational reference tables joined by every other Safe Skies product. Refreshed monthly from OurAirports, IATA, and FAA registries; versioned and released atomically.",
+    schemas=[
+        _schema_entry(
+            name="airports",
+            server_path=f"{CATALOG}.reference.airports",
+            business_name="Airports Master",
+            description="Authoritative airport master — ICAO/IATA, location, size class. Updated monthly from OurAirports.",
+            tags=["reference", "geography"],
+            properties=[
+                _prop("icao", "string", required=True, unique=True, pattern=r"^[A-Z]{4}$", semantic="ICAO airport code"),
+                _prop("iata", "string", required=True, pattern=r"^[A-Z]{3}$", semantic="IATA airport code"),
+                _prop("name", "string", required=True),
+                _prop("city", "string"),
+                _prop("country_iso", "string", required=True, pattern=r"^[A-Z]{2}$", semantic="ISO 3166 alpha-2 country code"),
+                _prop("lat", "number", min_=-90, max_=90),
+                _prop("lon", "number", min_=-180, max_=180),
+                _prop("elevation_ft", "integer"),
+                _prop("size_class", "string", enum=["large", "medium", "small"]),
+            ],
+        ),
+        _schema_entry(
+            name="airlines",
+            server_path=f"{CATALOG}.reference.airlines",
+            business_name="Airlines Master",
+            description="Major airline carriers with IATA + ICAO codes, country, and alliance membership.",
+            tags=["reference", "industry"],
+            properties=[
+                _prop("iata", "string", required=True, unique=True, pattern=r"^[A-Z0-9]{2}$"),
+                _prop("icao", "string", required=True, pattern=r"^[A-Z]{3}$"),
+                _prop("name", "string", required=True),
+                _prop("country_iso", "string", required=True, pattern=r"^[A-Z]{2}$"),
+                _prop("alliance", "string"),
+            ],
+        ),
+        _schema_entry(
+            name="aircraft_registry",
+            server_path=f"{CATALOG}.reference.aircraft_registry",
+            business_name="Aircraft Registry",
+            description="Aircraft registry — tail number, ICAO 24-bit address, type, MTOW, cabin config, operator.",
+            tags=["reference", "fleet"],
+            properties=[
+                _prop("tail_number", "string", required=True, unique=True, semantic="Aircraft registration"),
+                _prop("icao24", "string", required=True, unique=True, pattern=r"^[0-9A-F]{6}$", semantic="ICAO 24-bit address"),
+                _prop("aircraft_type_icao", "string"),
+                _prop("aircraft_type_iata", "string"),
+                _prop("manufacturer", "string"),
+                _prop("model", "string"),
+                _prop("year_manufactured", "integer"),
+                _prop("mtow_kg", "integer", description="Maximum Takeoff Weight"),
+                _prop("active_status", "string", enum=["ACTIVE", "STORED", "SCRAPPED", "LEASED_OUT", "UNKNOWN"]),
+            ],
+        ),
     ],
     quality=[
-        _qrule("icao_unique", "ICAO airport code must be globally unique in the airports master", rule="icao is unique", dimension="uniqueness", business_impact="critical"),
-        _qrule("iata_format", "IATA airport code must be a 3-letter uppercase code", rule="iata matches '^[A-Z]{3}$'", dimension="validity"),
-        _qrule("lat_lon_present", "Every airport must have lat/lon for proximity queries", rule="lat is not null and lon is not null", dimension="completeness"),
+        _qrule("airports_icao_unique", "ICAO airport code must be globally unique in the airports table", rule="icao is unique in airports", dimension="uniqueness", business_impact="critical"),
+        _qrule("airports_lat_lon_present", "Every airport must have lat/lon for proximity queries", rule="lat is not null and lon is not null in airports", dimension="completeness"),
+        _qrule("airlines_iata_unique", "Airline IATA code must be globally unique in the airlines table", rule="iata is unique in airlines", dimension="uniqueness", business_impact="critical"),
+        _qrule("aircraft_icao24_format", "ICAO 24-bit address must be 6 hex characters", rule="icao24 matches '^[0-9A-F]{6}$' in aircraft_registry", dimension="validity", business_impact="critical"),
+        _qrule("aircraft_tail_number_unique", "Tail number must be globally unique per ICAO Annex 7", rule="tail_number is unique in aircraft_registry", dimension="uniqueness", business_impact="critical"),
+        _qrule("scrapped_not_in_schedules", "Aircraft marked SCRAPPED should not appear in active flight schedules (cross-product hygiene check)", rule="aircraft_registry.active_status != 'SCRAPPED' OR tail_number not in safe_skies.scheduling.oag_schedule", dimension="consistency", severity="warning", type_="sql"),
     ],
-    tags=["reference", "master-data", "source-aligned"],
-)
-
-AIRLINES_CONTRACT = _contract(
-    name="airlines_master",
-    version="1.0.0",
-    owner_team="data-platform",
-    domain="Reference Data",
-    description="Major airline carriers with IATA + ICAO codes, country, and alliance membership.",
-    server_path=f"{CATALOG}.reference.airlines",
-    schema_props=[
-        _prop("iata", "string", required=True, unique=True, pattern=r"^[A-Z0-9]{2}$"),
-        _prop("icao", "string", required=True, pattern=r"^[A-Z]{3}$"),
-        _prop("name", "string", required=True),
-        _prop("country_iso", "string", required=True, pattern=r"^[A-Z]{2}$"),
-        _prop("alliance", "string"),
-    ],
-    quality=[
-        _qrule("iata_unique", "Airline IATA code must be globally unique in the airlines master", rule="iata is unique", dimension="uniqueness", business_impact="critical"),
-        _qrule("icao_format", "Airline ICAO code must be a 3-letter uppercase code", rule="icao matches '^[A-Z]{3}$'", dimension="validity"),
-    ],
-    tags=["reference", "master-data", "source-aligned"],
-)
-
-AIRCRAFT_REGISTRY_CONTRACT = _contract(
-    name="aircraft_registry",
-    version="1.0.0",
-    owner_team="data-platform",
-    domain="Reference Data",
-    description="Aircraft registry — tail number, ICAO 24-bit address, type, MTOW, cabin config, operator.",
-    server_path=f"{CATALOG}.reference.aircraft_registry",
-    schema_props=[
-        _prop("tail_number", "string", required=True, unique=True, semantic="Aircraft registration"),
-        _prop("icao24", "string", required=True, unique=True, pattern=r"^[0-9A-F]{6}$", semantic="ICAO 24-bit address"),
-        _prop("aircraft_type_icao", "string"),
-        _prop("aircraft_type_iata", "string"),
-        _prop("manufacturer", "string"),
-        _prop("model", "string"),
-        _prop("year_manufactured", "integer"),
-        _prop("mtow_kg", "integer", description="Maximum Takeoff Weight"),
-        _prop("active_status", "string", enum=["ACTIVE", "STORED", "SCRAPPED", "LEASED_OUT", "UNKNOWN"]),
-    ],
-    quality=[
-        _qrule("icao24_format", "ICAO 24-bit address must be 6 hex characters", rule="icao24 matches '^[0-9A-F]{6}$'", dimension="validity", business_impact="critical"),
-        _qrule("tail_number_unique", "Tail number must be globally unique per ICAO Annex 7", rule="tail_number is unique", dimension="uniqueness", business_impact="critical"),
-        _qrule("scrapped_not_in_schedules", "Aircraft marked SCRAPPED should not appear in active flight schedules (cross-product hygiene check)", rule="active_status != 'SCRAPPED' OR not_in(safe_skies.scheduling.oag_schedule, tail_number)", dimension="consistency", severity="warning", type_="sql"),
-    ],
-    tags=["reference", "master-data", "fleet", "source-aligned"],
+    refresh_frequency="monthly",
+    sla_freshness_minutes=60 * 24 * 7,  # 7 days
+    tags=["reference", "master-data", "source-aligned", "multi-schema"],
 )
 
 
@@ -612,31 +720,84 @@ NOTAMS_CONTRACT = _contract(
 
 
 # ───── Aggregate-aligned ─────
+# Global Flight Ops exposes three output ports, all derived from the same unified
+# join + materialization job: a current-state snapshot, a completed-flight history,
+# and an event stream. Single contract = single trust unit = atomic version bump.
 GLOBAL_FLIGHT_OPS_CONTRACT = _contract(
     name="global_flight_ops",
     version="1.0.0",
     owner_team="operations-analytics",
     domain="Flight Ops",
-    description="Unified per-flight view composing Live ADS-B Telemetry, OAG Schedules, Flight Status Events, METAR Observations, and Aviation Reference Master. The single source-of-truth for any consumer who asks 'how is this flight going?'.",
-    server_path=f"{CATALOG}.flight_ops.global_flight_ops_unified",
-    schema_props=[
-        _prop("flight_key", "string", required=True, unique=True),
-        _prop("airline_iata", "string", required=True),
-        _prop("dep_iata", "string", required=True),
-        _prop("arr_iata", "string", required=True),
-        _prop("scheduled_dep_utc", "date"),
-        _prop("scheduled_arr_utc", "date"),
-        _prop("last_event_type", "string"),
-        _prop("max_delay_minutes", "integer"),
-        _prop("tail_number", "string"),
+    description="Unified per-flight view composing Live ADS-B Telemetry, OAG Schedules, Flight Status Events, Aviation Weather, and Aviation Reference. The single source-of-truth for 'how is this flight going?'. Three output ports tune the same trusted aggregate for different consumption shapes.",
+    schemas=[
+        _schema_entry(
+            name="global_flight_ops_unified",
+            server_path=f"{CATALOG}.flight_ops.global_flight_ops_unified",
+            business_name="Global Flight Ops (current snapshot)",
+            description="One row per active/recent flight with the latest known state. The default port for dashboards asking 'what's happening right now'.",
+            tags=["flight-ops", "current", "snapshot"],
+            properties=[
+                _prop("flight_key", "string", required=True, unique=True),
+                _prop("airline_iata", "string", required=True),
+                _prop("dep_iata", "string", required=True),
+                _prop("arr_iata", "string", required=True),
+                _prop("scheduled_dep_utc", "date"),
+                _prop("scheduled_arr_utc", "date"),
+                _prop("last_event_type", "string"),
+                _prop("max_delay_minutes", "integer"),
+                _prop("tail_number", "string"),
+            ],
+        ),
+        _schema_entry(
+            name="global_flight_ops_history",
+            server_path=f"{CATALOG}.flight_ops.global_flight_ops_history",
+            business_name="Global Flight Ops (history)",
+            description="Completed-flight archive: one row per service-date/flight with actuals and final disposition.",
+            tags=["flight-ops", "history", "archive"],
+            properties=[
+                _prop("flight_key", "string", required=True, unique=True),
+                _prop("service_date", "date", required=True),
+                _prop("airline_iata", "string", required=True),
+                _prop("dep_iata", "string", required=True),
+                _prop("arr_iata", "string", required=True),
+                _prop("actual_dep_utc", "date"),
+                _prop("actual_arr_utc", "date"),
+                _prop("block_minutes_actual", "integer"),
+                _prop("total_delay_minutes", "integer"),
+                _prop("final_disposition", "string", enum=["LANDED", "CANCELLED", "DIVERTED"]),
+                _prop("tail_number", "string"),
+            ],
+        ),
+        _schema_entry(
+            name="global_flight_ops_event_stream",
+            server_path=f"{CATALOG}.flight_ops.global_flight_ops_event_stream",
+            business_name="Global Flight Ops (event stream)",
+            description="Flat event stream enriched with flight context. Tuned for alerting/event-driven consumers.",
+            tags=["flight-ops", "events", "stream"],
+            properties=[
+                _prop("event_id", "string", required=True, unique=True),
+                _prop("event_ts_utc", "date", required=True),
+                _prop("event_source", "string", required=True, enum=["FLIGHT_STATUS", "ADSB", "WEATHER", "NOTAM"]),
+                _prop("event_type", "string", required=True),
+                _prop("flight_key", "string"),
+                _prop("airline_iata", "string"),
+                _prop("dep_iata", "string"),
+                _prop("arr_iata", "string"),
+                _prop("payload_json", "string", description="Source-specific event payload, JSON-encoded for schema-agnostic fan-out"),
+            ],
+        ),
     ],
     quality=[
-        _qrule("input_freshness", "Aggregate must be no more than 5 min behind its newest input (Live ADS-B)", rule="now() - max(last_event_ts_utc) < interval 5 minutes", dimension="freshness", severity="warning", schedule="every-5m"),
-        _qrule("flight_key_unique", "Each flight appears at most once in the unified view per service date", rule="flight_key is unique", dimension="uniqueness", business_impact="critical"),
+        _qrule("input_freshness", "Aggregate must be no more than 5 min behind its newest input (Live ADS-B)", rule="now() - max(global_flight_ops_unified.last_event_ts_utc) < interval 5 minutes", dimension="freshness", severity="warning", schedule="every-5m"),
+        _qrule("current_flight_key_unique", "Current snapshot: one row per flight", rule="global_flight_ops_unified.flight_key is unique", dimension="uniqueness", business_impact="critical"),
+        _qrule("history_only_completed", "History port should never contain in-progress flights", rule="global_flight_ops_history.final_disposition is not null", dimension="completeness", business_impact="critical"),
+        _qrule("history_disposition_terminal", "Final disposition must be LANDED/CANCELLED/DIVERTED", rule="global_flight_ops_history.final_disposition in ('LANDED','CANCELLED','DIVERTED')", dimension="validity"),
+        _qrule("stream_event_ts_present", "Every event-stream row must carry a UTC timestamp", rule="global_flight_ops_event_stream.event_ts_utc is not null", dimension="completeness", business_impact="critical"),
+        _qrule("stream_source_known", "Event source must be a registered source", rule="global_flight_ops_event_stream.event_source in ('FLIGHT_STATUS','ADSB','WEATHER','NOTAM')", dimension="validity"),
         _qrule("flight_count_floor", "Daily flight count should not drop below 80% of the trailing-7-day average (catches upstream ingest gaps)", rule="daily_count >= 0.8 * trailing_7d_avg", dimension="completeness", severity="warning", type_="sql"),
-        _qrule("composition_coverage", "Every joined flight should have a corresponding row in OAG schedule + Flight Status", rule="flight_key in (select flight_key from safe_skies.scheduling.oag_schedule) and flight_key in (select flight_key from safe_skies.flight_ops.flight_status)", dimension="consistency", type_="sql"),
+        _qrule("composition_coverage", "Every joined flight should have a corresponding row in OAG schedule + Flight Status", rule="global_flight_ops_unified.flight_key in (select flight_key from safe_skies.scheduling.oag_schedule) and flight_key in (select flight_key from safe_skies.flight_ops.flight_status)", dimension="consistency", type_="sql"),
     ],
-    tags=["flight-ops", "aggregate-aligned", "marquee"],
+    tags=["flight-ops", "aggregate-aligned", "marquee", "multi-schema"],
 )
 
 FLIGHT_CARBON_CONTRACT = _contract(
@@ -690,10 +851,13 @@ OTP_METRICS_CONTRACT = _contract(
 )
 
 
-# All real contracts collected
+# All real contracts collected. AVIATION_REFERENCE_CONTRACT spans 3 schemas
+# (airports/airlines/aircraft_registry); AVIATION_WEATHER_CONTRACT spans 2
+# (raw + current); FLIGHT_STATUS_CONTRACT spans 3 (raw + delays + cancellations);
+# GLOBAL_FLIGHT_OPS_CONTRACT spans 3 (current + history + event_stream).
 ALL_CONTRACTS = [
     LIVE_FLIGHTS_CONTRACT, FLIGHT_SCHEDULE_CONTRACT, FLIGHT_STATUS_CONTRACT,
-    METAR_CONTRACT, AIRPORTS_CONTRACT, AIRLINES_CONTRACT, AIRCRAFT_REGISTRY_CONTRACT,
+    AVIATION_WEATHER_CONTRACT, AVIATION_REFERENCE_CONTRACT,
     TMI_CONTRACT, NOTAMS_CONTRACT,
     GLOBAL_FLIGHT_OPS_CONTRACT, FLIGHT_CARBON_CONTRACT,
     OTP_METRICS_CONTRACT,
@@ -731,10 +895,10 @@ def _odps_product(*, name: str, domain: str, owner_team: str, description: str, 
 SOURCE_ALIGNED_PRODUCTS = [
     _odps_product(name="Live ADS-B Telemetry", domain="Live Telemetry", owner_team="flight-ops-platform", description="Per-15-second ADS-B telemetry for every airborne flight. The bronze table adsb_v2_raw is the raw landing zone; the silver table adsb_v2 is the contract-backed output port.", alignment="source-aligned", contract_names=["live_flights"]),
     _odps_product(name="OAG Flight Schedules", domain="OAG Ingest", owner_team="schedule-data-ops", description="Published commercial schedules from OAG ingest. Updated every 15 minutes.", alignment="source-aligned", contract_names=["flight_schedule"]),
-    _odps_product(name="Flight Status Events", domain="Flight Status", owner_team="flight-ops-platform", description="OOOI events + delays + cancellations + diversions. Real-time within ~6 seconds.", alignment="source-aligned", contract_names=["flight_status_events"]),
+    _odps_product(name="Flight Status Events", domain="Flight Status", owner_team="flight-ops-platform", description="OOOI events + delays + cancellations + diversions. Real-time within ~6 seconds. Exposes three output ports (raw stream, delays-only, cancellations/diversions) all backed by a single contract — the projections share trust lineage and release cadence with the raw stream.", alignment="source-aligned", contract_names=["flight_status_events"]),
     _odps_product(name="ATC Flow Initiatives", domain="ATC Flow", owner_team="network-planning", description="FAA TMI events + NOTAMs.", alignment="source-aligned", contract_names=["tmi_events", "notams"]),
-    _odps_product(name="METAR Observations", domain="Aviation Weather", owner_team="operations-ingest", description="Hourly aviation weather per airport.", alignment="source-aligned", contract_names=["metar_observations"]),
-    _odps_product(name="Aviation Reference Master", domain="Geography", owner_team="data-platform", description="Authoritative airport, airline, and aircraft master data. Used by every other product.", alignment="source-aligned", contract_names=["airports_master", "airlines_master", "aircraft_registry"]),
+    _odps_product(name="METAR Observations", domain="Aviation Weather", owner_team="operations-ingest", description="Aviation weather per airport. Two output ports (raw hourly stream + current-state projection per station with derived flight category) backed by a single contract — they share materialization and SLA.", alignment="source-aligned", contract_names=["aviation_weather"]),
+    _odps_product(name="Aviation Reference Master", domain="Geography", owner_team="data-platform", description="Authoritative airport, airline, and aircraft master data. Used by every other product. One contract spans all three schemas — refreshed atomically by the monthly registry job.", alignment="source-aligned", contract_names=["aviation_reference"]),
     _odps_product(name="Aircraft Maintenance Records", domain="Maintenance", owner_team="engineering-mx", description="Open and closed work orders by tail number.", alignment="source-aligned"),
     _odps_product(name="Crew Rosters & Duty Logs", domain="Crew", owner_team="crew-resources", description="Crew assignments + FAA Part 117 duty time logs.", alignment="source-aligned"),
     _odps_product(name="Fuel Uplifts", domain="Fuel", owner_team="fuel-operations", description="Per-flight fuel uplift records including SAF mix.", alignment="source-aligned"),
@@ -743,7 +907,7 @@ SOURCE_ALIGNED_PRODUCTS = [
 ]
 
 AGGREGATE_ALIGNED_PRODUCTS = [
-    _odps_product(name="🎯 Global Flight Ops", domain="Operational Aggregates", owner_team="operations-analytics", description="The unified view of every flight — composed from Live ADS-B Telemetry, OAG Schedules, Flight Status Events, METAR Observations, and Aviation Reference Master. The cross-domain source-of-truth for operations.", alignment="aggregate-aligned", contract_names=["global_flight_ops"], certification="CERTIFIED_GOLD"),
+    _odps_product(name="🎯 Global Flight Ops", domain="Operational Aggregates", owner_team="operations-analytics", description="The unified view of every flight — composed from Live ADS-B Telemetry, OAG Schedules, Flight Status Events, Aviation Weather, and Aviation Reference. Three output ports (current snapshot, completed history, event stream) backed by a single contract; the trio is built atomically by one job and versions together.", alignment="aggregate-aligned", contract_names=["global_flight_ops"], certification="CERTIFIED_GOLD"),
     _odps_product(name="Network Connectivity", domain="OAG Ingest", owner_team="network-planning", description="Viable itineraries computed from schedules + status + MCT rules.", alignment="aggregate-aligned"),
     _odps_product(name="Flight Emissions", domain="Operational Aggregates", owner_team="sustainability-office", description="Per-flight estimated CO₂ + fuel burn for ESG reporting.", alignment="aggregate-aligned", contract_names=["flight_carbon"]),
 ]

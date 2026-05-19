@@ -55,9 +55,8 @@ def clear_aviation_demo(
     cascade-delete via SQLAlchemy ORM relationships.
     """
     from src.db_models.data_contracts import DataContractDb
-    from src.db_models.data_products import DataProductDb
-    from src.db_models.teams import TeamDb
-    from src.db_models.data_domains import DataDomainDb
+    # NOTE: data_products / teams / data_domains are not imported because their
+    # deletion goes through manager methods or is left commented out below.
 
     seeded_product_names = {p["name"] for p in REAL_PRODUCTS} | {sp["name"] for sp in STUB_PRODUCTS}
     seeded_contract_names = {c["name"] for c in ALL_CONTRACTS}
@@ -85,12 +84,8 @@ def clear_aviation_demo(
             logger.warning(f"Could not delete contract {c.name}: {e}")
     db.flush()
 
-    # Teams + Domains: leave in place by default (they may be reused by other demo data).
-    # Uncomment if a full wipe is needed.
-    # for t in db.query(TeamDb).filter(TeamDb.name.in_(seeded_team_names)).all():
-    #     db.delete(t); deleted["teams"] += 1
-    # for d in db.query(DataDomainDb).filter(DataDomainDb.name.in_(seeded_domain_names)).all():
-    #     db.delete(d); deleted["domains"] += 1
+    # Teams + Domains: left in place by default (other demo data may reuse them).
+    # To enable a full wipe, re-import TeamDb / DataDomain and uncomment.
 
     db.commit()
     logger.info(f"Cleared aviation demo: {deleted}")
@@ -292,6 +287,10 @@ def load_aviation_demo(
         logger.warning(f"Could not list existing products: {e}")
         existing_product_by_name = {}
 
+    # Build a name → contract dict map so we can look up each contract's
+    # schemas when generating output ports (one port per schema).
+    contract_dict_by_name = {c["name"]: c for c in ALL_CONTRACTS}
+
     for p in REAL_PRODUCTS:
         if p["name"] in existing_product_by_name:
             product_by_name[p["name"]] = existing_product_by_name[p["name"]]
@@ -299,16 +298,27 @@ def load_aviation_demo(
             report["products"]["created"].append(p["name"] + " (existing)")
             continue
         contract_names = p.pop("_seed_contract_names", [])
-        # Bind the input contract IDs into the product's outputPort list (ODPS shape)
+        # Bind the input contract IDs into the product's outputPort list (ODPS shape).
+        # A contract can span multiple schemas (tables); we emit one output port per
+        # schema, all referencing the same contractId. This is the "product != table"
+        # pattern: a single contract is the trust unit, but consumers connect to
+        # tables individually via separate ports.
         output_ports = []
         for cn in contract_names:
             cid = contract_by_name.get(cn)
-            if cid:
+            if not cid:
+                continue
+            contract_dict = contract_dict_by_name.get(cn, {})
+            schemas = contract_dict.get("schema", [])
+            for sch in schemas:
+                port_name = sch.get("name") or cn
+                physical = sch.get("physicalName", "")
                 output_ports.append({
-                    "name": cn,
+                    "name": port_name,
                     "version": "1.0.0",
                     "contractId": cid,
-                    "description": f"Contract-backed output port for {cn}",
+                    "type": "table",
+                    "description": f"Output port for {physical or port_name} (contract: {cn})",
                 })
         p_data = dict(p)
         if output_ports:
