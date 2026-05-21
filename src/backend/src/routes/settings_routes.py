@@ -20,6 +20,12 @@ from ..common.dependencies import (
     AuditCurrentUserDep,
     DBSessionDep,
 )
+from ..common.manager_dependencies import (
+    get_data_domain_manager,
+    get_data_products_manager,
+    get_data_contracts_manager,
+)
+from ..controller.teams_manager import teams_manager as _teams_manager_singleton
 from ..models.settings import HandleRoleRequest
 from ..models.notifications import Notification, NotificationType
 from ..controller.notifications_manager import NotificationsManager
@@ -517,6 +523,129 @@ async def load_demo_data(
             action="LOAD_DEMO_DATA",
             success=success,
             details=details
+        )
+
+
+def _get_er_manager(request: Request):
+    mgr = getattr(request.app.state, "entity_relationships_manager", None)
+    if not mgr:
+        raise HTTPException(status_code=503, detail="Entity Relationships service not configured.")
+    return mgr
+
+
+def _get_sub_manager(request: Request):
+    mgr = getattr(request.app.state, "entity_subscriptions_manager", None)
+    if not mgr:
+        raise HTTPException(status_code=503, detail="Entity Subscriptions service not configured.")
+    return mgr
+
+
+@router.delete("/settings/demo-data/aviation", status_code=status.HTTP_200_OK)
+async def clear_aviation_demo_endpoint(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: DBSessionDep,
+    audit_manager: AuditManagerDep,
+    current_user: AuditCurrentUserDep,
+    products_mgr=Depends(get_data_products_manager),
+    contracts_mgr=Depends(get_data_contracts_manager),
+    domain_mgr=Depends(get_data_domain_manager),
+):
+    """Clear aviation demo data (products + contracts) so a fresh seed runs cleanly.
+
+    The generic /settings/demo-data DELETE only targets the older retail/hls/fsi/mfg/auto
+    presets (UUID-prefix matching). Aviation seed uses random UUIDs and is invisible
+    to that endpoint. This one targets aviation by entity name via manager methods.
+    """
+    details: Dict[str, Any] = {"action": "clear_aviation_demo"}
+    success = False
+    try:
+        from src.data.aviation.seed import clear_aviation_demo
+        report = clear_aviation_demo(
+            db=db,
+            domain_mgr=domain_mgr,
+            teams_mgr=_teams_manager_singleton,
+            products_mgr=products_mgr,
+            contracts_mgr=contracts_mgr,
+        )
+        success = True
+        details["report"] = report
+        return {"status": "success", "deleted": report}
+    except Exception as e:
+        logger.error("Error clearing aviation demo", exc_info=True)
+        details["exception"] = str(e)
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to clear aviation demo: {str(e)}",
+        )
+    finally:
+        background_tasks.add_task(
+            audit_manager.log_action_background,
+            username=current_user.username,
+            ip_address=request.client.host if request.client else None,
+            feature=SETTINGS_FEATURE_ID,
+            action="CLEAR_AVIATION_DEMO",
+            success=success,
+            details=details,
+        )
+
+
+@router.post("/settings/demo-data/load-aviation", status_code=status.HTTP_200_OK)
+async def load_aviation_demo_endpoint(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: DBSessionDep,
+    audit_manager: AuditManagerDep,
+    current_user: AuditCurrentUserDep,
+    domain_mgr=Depends(get_data_domain_manager),
+    products_mgr=Depends(get_data_products_manager),
+    contracts_mgr=Depends(get_data_contracts_manager),
+    er_mgr=Depends(_get_er_manager),
+    sub_mgr=Depends(_get_sub_manager),
+):
+    """Load the Safe Skies aviation demo via Ontos manager calls (no SQL).
+
+    Creates 8 domains, ~13 teams, 12 ODCS v3.1 contracts, 16 real ODPS data products,
+    ~30 stub products, entity-relationship compositions, and seeded consumer subscriptions.
+
+    Idempotent for domains + teams (looked up by name); products/contracts may conflict
+    if already present — call DELETE /settings/demo-data first for a fresh load.
+    """
+    success = False
+    details: Dict[str, Any] = {"action": "load_aviation_demo"}
+    try:
+        from src.data.aviation.seed import load_aviation_demo
+        report = load_aviation_demo(
+            db=db,
+            domain_mgr=domain_mgr,
+            teams_mgr=_teams_manager_singleton,
+            products_mgr=products_mgr,
+            contracts_mgr=contracts_mgr,
+            er_mgr=er_mgr,
+            sub_mgr=sub_mgr,
+            current_user=current_user.email,
+        )
+        success = True
+        details["report"] = report
+        return {"status": "success", "report": report}
+    except Exception as e:
+        logger.error("Error loading aviation demo", exc_info=True)
+        details["exception"] = str(e)
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to load aviation demo: {str(e)}",
+        )
+    finally:
+        background_tasks.add_task(
+            audit_manager.log_action_background,
+            username=current_user.username,
+            ip_address=request.client.host if request.client else None,
+            feature=SETTINGS_FEATURE_ID,
+            action="LOAD_AVIATION_DEMO",
+            success=success,
+            details=details,
         )
 
 
@@ -1393,3 +1522,4 @@ async def list_connectors_legacy():
 async def test_connector_legacy(connector_type: str):
     """DEPRECATED: Use POST /api/connections/{id}/test instead."""
     return {"error": "Deprecated. Use /api/connections/{id}/test with a connection ID."}
+# touch 1779110464
