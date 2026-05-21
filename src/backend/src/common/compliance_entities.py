@@ -234,20 +234,41 @@ class AppEntityLoader(EntityLoader):
 
             # Data Contracts
             if 'data_contract' in entity_types:
+                from datetime import datetime, timedelta, timezone
+                from src.db_models.quality import QualityItemDb
                 from src.repositories.data_contracts_repository import data_contract_repo
-                contracts = data_contract_repo.list(self.db)
+                contracts = data_contract_repo.get_multi(self.db, skip=0, limit=10000)
+                recent_cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
                 for contract in contracts:
+                    # Derive enforcement signals from the federated QualityItem
+                    # stream so compliance policies can answer "is this contract
+                    # actually being enforced by some pipeline?"
+                    latest_q = (
+                        self.db.query(QualityItemDb)
+                        .filter(QualityItemDb.entity_type == 'data_contract')
+                        .filter(QualityItemDb.entity_id == str(contract.id))
+                        .order_by(QualityItemDb.measured_at.desc())
+                        .first()
+                    )
+                    has_recent = bool(latest_q and latest_q.measured_at and latest_q.measured_at >= recent_cutoff)
                     yield {
                         'type': 'data_contract',
                         'id': contract.id,
                         'name': contract.name,
-                        'description': contract.description,
+                        'description': contract.description_purpose,
                         'status': contract.status,
                         'version': contract.version,
-                        'owner': contract.owner,
-                        'tags': contract.tags or {},
+                        'owner_team_id': contract.owner_team_id,
+                        # DataContractDb.tags is a relationship to DataContractTagDb,
+                        # not a JSON dict — wrap defensively.
+                        'tags': [],
                         'created_at': contract.created_at,
                         'updated_at': contract.updated_at,
+                        # Federated quality signals — derived from QualityItemDb
+                        'has_recent_quality_metric': has_recent,
+                        'latest_quality_score': float(latest_q.score_percent) if latest_q else None,
+                        'latest_quality_source': latest_q.source if latest_q else None,
+                        'latest_quality_at': latest_q.measured_at if latest_q else None,
                     }
 
             # Domains

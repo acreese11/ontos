@@ -462,6 +462,56 @@ def load_aviation_demo(
                 report["subscriptions"]["failed"] += 1
                 report["subscriptions"]["errors"].append(f"{s['subscriber_team']} → {s['product']}: {e}")
 
+    # ─── Compliance policy: contracts must be actively enforced ──
+    # Meta-quality: surface which contracts in the mesh are receiving recent
+    # QualityItems (from any pipeline / any tool — dqx, dbt, GE, etc.). This
+    # is the "watching the watchers" beat that completes the federated story:
+    # Ontos doesn't enforce; it observes whether enforcement is happening.
+    try:
+        from src.controller.compliance_manager import ComplianceManager
+        from src.models.compliance import CompliancePolicy
+        from src.db_models.compliance import CompliancePolicyDb
+        from uuid import uuid4
+        compliance_mgr = ComplianceManager()
+        policy_name = "active-contracts-have-recent-quality"
+        existing_policy = (
+            db.query(CompliancePolicyDb)
+            .filter(CompliancePolicyDb.name == policy_name)
+            .first()
+        )
+        if existing_policy is None:
+            policy = CompliancePolicy(
+                id=uuid4(),
+                name=policy_name,
+                description=(
+                    "Every active data contract must have a recent quality measurement "
+                    "(within the last 24h) from at least one enforcement pipeline. The "
+                    "measurement may come from any source — dqx, dbt, great_expectations, "
+                    "soda, etc. — because Ontos is platform-agnostic for quality."
+                ),
+                failure_message="No quality measurement has been received for this contract in the last 24 hours.",
+                rule=(
+                    # The DSL parses 'true'/'false' as string identifiers, not
+                    # booleans — use a bare ASSERT on the property; the result is
+                    # bool-coerced by the policy runner.
+                    "MATCH (c:data_contract) "
+                    "WHERE c.status = 'active' "
+                    "ASSERT c.has_recent_quality_metric"
+                ),
+                compliance=0.0,
+                category="quality",
+                severity="medium",
+                is_active=True,
+            )
+            compliance_mgr.create_policy(db, policy=policy, current_user=current_user)
+            report["compliance_policies"] = {"created": [policy_name]}
+            logger.info("Seeded compliance policy: %s", policy_name)
+        else:
+            report["compliance_policies"] = {"existing": [policy_name]}
+    except Exception as e:
+        logger.warning("Failed to seed compliance policy: %s", e, exc_info=True)
+        report["compliance_policies"] = {"failed": [str(e)]}
+
     # Final commit
     db.commit()
 
