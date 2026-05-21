@@ -294,10 +294,13 @@ def load_aviation_demo(
     for p in REAL_PRODUCTS:
         if p["name"] in existing_product_by_name:
             product_by_name[p["name"]] = existing_product_by_name[p["name"]]
-            p.pop("_seed_contract_names", None)
             report["products"]["created"].append(p["name"] + " (existing)")
             continue
-        contract_names = p.pop("_seed_contract_names", [])
+        # IMPORTANT: don't mutate the module-level REAL_PRODUCTS dicts. Using
+        # .pop here would strip _seed_contract_names on the first reseed and
+        # leave subsequent reseeds (same Python process) with no contracts to
+        # bind, producing products with zero output ports.
+        contract_names = list(p.get("_seed_contract_names", []) or [])
         # Bind the input contract IDs into the product's outputPort list (ODPS shape).
         # A contract can span multiple schemas (tables); we emit one output port per
         # schema, all referencing the same contractId. This is the "product != table"
@@ -321,6 +324,8 @@ def load_aviation_demo(
                     "description": f"Output port for {physical or port_name} (contract: {cn})",
                 })
         p_data = dict(p)
+        # Strip the seed-only field from the per-call copy (not the source dict).
+        p_data.pop("_seed_contract_names", None)
         if output_ports:
             p_data["outputPorts"] = output_ports
 
