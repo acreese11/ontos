@@ -2317,7 +2317,42 @@ class DataContractsManager(DeliveryMixin, SearchableAsset):
             # Create quality checks if provided
             if data_dict.get('qualityRules'):
                 self._create_quality_checks(db, created.id, data_dict['qualityRules'])
-            
+
+            # Create servers + server properties if provided.
+            # (Bug fix: previously only `create_from_upload` called _create_servers,
+            # so contracts created via this method lost all server metadata.)
+            if data_dict.get('servers'):
+                self._create_servers(db, created.id, data_dict['servers'])
+
+            # Create tags (string list — ODCS v3.1 standard form).
+            # (Bug fix: tags were also being silently dropped here.)
+            raw_tags = data_dict.get('tags') or []
+            string_tags = [t for t in raw_tags if isinstance(t, str)]
+            if string_tags:
+                self._create_tags(db, created.id, string_tags)
+
+            # Create roles (ODCS access roles — data-steward, consumer, etc.).
+            # (Bug fix: roles also silently dropped.)
+            if data_dict.get('roles'):
+                self._create_roles(db, created.id, data_dict['roles'])
+
+            # Create support channels (slack, email, docs URLs).
+            if data_dict.get('support'):
+                self._create_support_channels(db, created.id, data_dict['support'])
+
+            # Create custom properties (top-level customProperties on the contract).
+            if data_dict.get('customProperties'):
+                self._create_custom_properties(db, created.id, data_dict['customProperties'])
+
+            # Create SLA properties (freshness, latency, retention, etc.).
+            sla_props = data_dict.get('slaProperties') or data_dict.get('sla_properties')
+            if sla_props:
+                self._create_sla_properties(db, created.id, sla_props)
+
+            # Create pricing block (optional — chargebacks, free tier, etc.).
+            if data_dict.get('price') or data_dict.get('pricing'):
+                self._create_pricing(db, created.id, data_dict.get('price') or data_dict.get('pricing'))
+
             # Process semantic links if provided
             if data_dict.get('authoritativeDefinitions'):
                 self._process_semantic_links(db, created.id, data_dict, current_user)
