@@ -792,6 +792,56 @@ class DataProductsManager(DeliveryMixin, SearchableAsset):
         """
         return self.transition_status(product_id, 'draft', current_user)
 
+    def set_publication_scope(
+        self,
+        product_id: str,
+        scope: str,
+        current_user: Optional[str] = None,
+    ) -> DataProductApi:
+        """Set the marketplace publication scope for a data product.
+
+        Mirrors the logic in `POST /data-products/{id}/set-publication-scope`. Hoisting it
+        from the route into the manager so other internal callers (the demo seeder, batch
+        importers, workflow steps) can use the same code path without going through HTTP.
+
+        Args:
+            product_id: ID of the product
+            scope: one of 'none', 'domain', 'organization', 'external'
+            current_user: username for the published_by audit field
+
+        Returns:
+            The updated DataProductApi
+        """
+        from datetime import datetime, timezone
+
+        valid_scopes = {"none", "domain", "organization", "external"}
+        if scope not in valid_scopes:
+            raise ValueError(
+                f"Invalid scope '{scope}'. Must be one of: {sorted(valid_scopes)}"
+            )
+
+        product_db = self._repo.get(db=self._db, id=product_id)
+        if not product_db:
+            raise ValueError(f"Data product with ID {product_id} not found")
+
+        if scope != "none" and product_db.status != "active":
+            raise ValueError(
+                f"Product must be active to publish. Current status: {product_db.status}"
+            )
+
+        product_db.publication_scope = scope
+        if scope != "none":
+            product_db.published_at = datetime.now(timezone.utc)
+            product_db.published_by = current_user
+        else:
+            product_db.published_at = None
+            product_db.published_by = None
+        self._db.add(product_db)
+        self._db.commit()
+        self._db.refresh(product_db)
+
+        return DataProductApi.model_validate(product_db)
+
     def publish_product(self, product_id: str, current_user: Optional[str] = None) -> DataProductApi:
         """
         Publish an approved product (approved → active).
@@ -819,7 +869,7 @@ class DataProductsManager(DeliveryMixin, SearchableAsset):
             if product_db.output_ports:
                 ports_without_contracts = [
                     port.name for port in product_db.output_ports
-                    if not port.data_contract_id
+                    if not port.contract_id
                 ]
                 if ports_without_contracts:
                     raise ValueError(
@@ -834,8 +884,8 @@ class DataProductsManager(DeliveryMixin, SearchableAsset):
                 contracts_not_approved = []
                 
                 for port in product_db.output_ports:
-                    if port.data_contract_id:
-                        contract = data_contract_repo.get(db=self._db, id=port.data_contract_id)
+                    if port.contract_id:
+                        contract = data_contract_repo.get(db=self._db, id=port.contract_id)
                         if contract:
                             contract_status = (contract.status or '').lower()
                             if contract_status not in valid_contract_statuses:
