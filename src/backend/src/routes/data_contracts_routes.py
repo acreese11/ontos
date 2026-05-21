@@ -1850,6 +1850,92 @@ async def export_odcs(contract_id: str, db: DBSessionDep, manager: DataContracts
         logger.exception("Failed to list versions for contract %s", contract_id)
         raise HTTPException(status_code=500, detail="Failed to list versions")
 
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Machine-friendly ODCS pull endpoints.
+#
+# Federated quality pipelines (Spark+DQX, dbt+GE, Flink, etc.) consume contracts
+# directly from Ontos. The /odcs/export endpoint above is browser-shaped (forces
+# a download). These siblings:
+#   - GET /data-contracts/{id}/odcs.yaml  → raw YAML, no Content-Disposition
+#   - GET /data-contracts/{id}/odcs.json  → JSON ODCS dict
+# Both emit ETag headers and honor If-None-Match for 304 polling.
+# ──────────────────────────────────────────────────────────────────────────────
+def _odcs_etag(db_obj) -> str:
+    """Derive a stable ETag from contract id + version + last updated timestamp.
+
+    The combination changes whenever any related row (schema, quality, server, etc.)
+    is updated because the contract's onupdate trigger bumps updated_at.
+    """
+    import hashlib
+    updated = db_obj.updated_at.isoformat() if db_obj.updated_at else ""
+    raw = f"{db_obj.id}|{db_obj.version}|{updated}"
+    return 'W/"' + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16] + '"'
+
+
+def _check_not_modified(request: Request, etag: str):
+    """Return a 304 Response if the client's If-None-Match matches the current ETag."""
+    from fastapi.responses import Response
+    inm = request.headers.get("if-none-match")
+    if inm and inm.strip() == etag:
+        return Response(status_code=304, headers={"ETag": etag, "Cache-Control": "no-cache"})
+    return None
+
+
+@router.get('/data-contracts/{contract_id}/odcs.yaml')
+async def get_odcs_yaml(
+    contract_id: str,
+    request: Request,
+    db: DBSessionDep,
+    manager: DataContractsManager = Depends(get_data_contracts_manager),
+    _: bool = Depends(PermissionChecker('data-contracts', FeatureAccessLevel.READ_ONLY)),
+):
+    """Machine-friendly YAML pull. Emits ETag; supports If-None-Match → 304."""
+    from fastapi.responses import Response
+    db_obj = data_contract_repo.get_with_all(db, id=contract_id)
+    if not db_obj:
+        raise HTTPException(status_code=404, detail="Contract not found")
+    etag = _odcs_etag(db_obj)
+    not_modified = _check_not_modified(request, etag)
+    if not_modified is not None:
+        return not_modified
+    odcs = manager.build_odcs_from_db(db_obj, db)
+    body = yaml.dump(odcs, default_flow_style=False, allow_unicode=True, sort_keys=False)
+    return Response(
+        content=body,
+        media_type='application/x-yaml',
+        headers={
+            'Content-Type': 'application/x-yaml; charset=utf-8',
+            'ETag': etag,
+            'Cache-Control': 'no-cache',
+        },
+    )
+
+
+@router.get('/data-contracts/{contract_id}/odcs.json')
+async def get_odcs_json(
+    contract_id: str,
+    request: Request,
+    db: DBSessionDep,
+    manager: DataContractsManager = Depends(get_data_contracts_manager),
+    _: bool = Depends(PermissionChecker('data-contracts', FeatureAccessLevel.READ_ONLY)),
+):
+    """Machine-friendly JSON pull. Emits ETag; supports If-None-Match → 304."""
+    from fastapi.responses import JSONResponse, Response
+    db_obj = data_contract_repo.get_with_all(db, id=contract_id)
+    if not db_obj:
+        raise HTTPException(status_code=404, detail="Contract not found")
+    etag = _odcs_etag(db_obj)
+    not_modified = _check_not_modified(request, etag)
+    if not_modified is not None:
+        return not_modified
+    odcs = manager.build_odcs_from_db(db_obj, db)
+    return JSONResponse(
+        content=odcs,
+        headers={'ETag': etag, 'Cache-Control': 'no-cache'},
+    )
+
+
 @router.post('/data-contracts/{contract_id}/link-assets', response_model=dict)
 async def auto_link_contract_schema_to_assets(
     contract_id: str,

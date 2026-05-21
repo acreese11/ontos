@@ -848,6 +848,10 @@ class DataContractsManager(DeliveryMixin, SearchableAsset):
             'version': db_obj.version,
             'status': db_obj.status,
         }
+        # ODCS expects a top-level name; without it DQX's
+        # generate_rules_from_contract validator fails before parsing schemas.
+        if getattr(db_obj, 'name', None):
+            odcs['name'] = db_obj.name
         
         # Resolve and include domain name if domain_id is set
         domain_resolution_failed = False
@@ -995,7 +999,6 @@ class DataContractsManager(DeliveryMixin, SearchableAsset):
                             prop_dict['transformLogic'] = prop.transform_logic
                         if prop.transform_source_objects:
                             try:
-                                import json
                                 prop_dict['transformSourceObjects'] = json.loads(prop.transform_source_objects)
                             except (json.JSONDecodeError, TypeError):
                                 prop_dict['transformSourceObjects'] = prop.transform_source_objects
@@ -1003,7 +1006,6 @@ class DataContractsManager(DeliveryMixin, SearchableAsset):
                             prop_dict['description'] = prop.transform_description
                         if prop.examples:
                             try:
-                                import json
                                 prop_dict['examples'] = json.loads(prop.examples)
                             except (json.JSONDecodeError, TypeError):
                                 prop_dict['examples'] = prop.examples
@@ -1011,7 +1013,6 @@ class DataContractsManager(DeliveryMixin, SearchableAsset):
                             prop_dict['criticalDataElement'] = prop.critical_data_element
                         if prop.logical_type_options_json:
                             try:
-                                import json
                                 logical_type_options = json.loads(prop.logical_type_options_json)
                                 prop_dict.update(logical_type_options)  # Merge constraints into property
                             except (json.JSONDecodeError, TypeError):
@@ -1100,7 +1101,6 @@ class DataContractsManager(DeliveryMixin, SearchableAsset):
                                 prop_value = custom_prop.value
                                 try:
                                     # Try to parse JSON if it's a serialized object
-                                    import json
                                     prop_value = json.loads(custom_prop.value)
                                 except (json.JSONDecodeError, TypeError):
                                     pass  # Keep as string
