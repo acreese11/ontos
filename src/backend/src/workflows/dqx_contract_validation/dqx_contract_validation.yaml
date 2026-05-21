@@ -1,0 +1,51 @@
+name: "DQX Contract Validation"
+description: "Reference federated quality pipeline: pull contract from Ontos, run DQX-native checks, write quarantine, post metrics back."
+format: "MULTI_TASK"
+
+environments:
+  - environment_key: "dqx-env"
+    spec:
+      # client=2 → Python 3.11 serverless runtime. datacontract-cli requires
+      # Python 3.11+, so the default client=1 (3.10) silently skips the wheel.
+      client: "2"
+      dependencies:
+        - "databricks-labs-dqx>=0.11.0"
+        - "datacontract-cli"
+
+tasks:
+  - task_key: "dqx_contract_validation"
+    spark_python_task:
+      python_file: "dqx_contract_validation.py"
+      parameters:
+        - "--contract_id"
+        - "{{job.parameters.contract_id}}"
+        - "--ontos_base_url"
+        - "{{job.parameters.ontos_base_url}}"
+        - "--pipeline_id"
+        - "{{job.parameters.pipeline_id}}"
+        - "--schema_index"
+        - "{{job.parameters.schema_index}}"
+        - "--write_quarantine"
+        - "{{job.parameters.write_quarantine}}"
+        - "--databricks_host"
+        - "{{job.parameters.databricks_host}}"
+        - "--secrets_scope"
+        - "{{job.parameters.secrets_scope}}"
+        - "--client_id_key"
+        - "{{job.parameters.client_id_key}}"
+        - "--client_secret_key"
+        - "{{job.parameters.client_secret_key}}"
+    environment_key: "dqx-env"
+
+parameters:
+  contract_id: ""
+  ontos_base_url: ""
+  pipeline_id: "dqx_contract_validation"
+  schema_index: "0"
+  write_quarantine: "true"
+  databricks_host: ""
+  secrets_scope: ""
+  client_id_key: "client_id"
+  client_secret_key: "client_secret"
+
+timeout_seconds: 1800

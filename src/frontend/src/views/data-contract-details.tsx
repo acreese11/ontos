@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import { AlertCircle, Download, Pencil, Trash2, Loader2, ArrowLeft, FileText, KeyRound, CopyPlus, Plus, Shapes, Columns2, Database, Sparkles, Package, ChevronLeft, ChevronRight, ShieldCheck, Globe, Link2 } from 'lucide-react'
+import { AlertCircle, Download, Pencil, Trash2, Loader2, ArrowLeft, FileText, KeyRound, CopyPlus, Plus, Shapes, Columns2, Database, Sparkles, Package, ChevronLeft, ChevronRight, ShieldCheck, Globe, Link2, PlayCircle } from 'lucide-react'
 import { DetailViewSkeleton } from '@/components/common/list-view-skeleton'
 import { Badge } from '@/components/ui/badge'
 import { Label } from '@/components/ui/label'
@@ -813,6 +813,49 @@ export default function DataContractDetails() {
   const handleCommitSuccess = () => {
     // Refresh the contract details after successful commit
     fetchDetails()
+  }
+
+  const [runningDqx, setRunningDqx] = useState(false)
+
+  const runDqxValidation = async () => {
+    if (!contractId || !contract) return
+    setRunningDqx(true)
+    try {
+      const res = await fetch(`/api/data-contracts/${contractId}/dqx/run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      })
+      const body = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        const detail = typeof body?.detail === 'string' ? body.detail : 'DQX run failed'
+        toast({ title: 'DQX validation not submitted', description: detail, variant: 'destructive' })
+        return
+      }
+      const monitorUrl: string | null = body?.monitor_url || null
+      toast({
+        title: 'DQX validation submitted',
+        description: monitorUrl
+          ? `Run ${body.run_id} started. Monitor in Databricks for results; the quality panel will refresh when metrics arrive.`
+          : `Run ${body.run_id} started.`,
+        action: monitorUrl
+          ? (
+              <a
+                href={monitorUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-sm underline"
+              >
+                Open in Databricks
+              </a>
+            )
+          : undefined,
+      })
+    } catch (e) {
+      toast({ title: 'DQX validation failed', description: e instanceof Error ? e.message : 'Unable to submit run', variant: 'destructive' })
+    } finally {
+      setRunningDqx(false)
+    }
   }
 
   const exportOdcs = async () => {
@@ -1817,6 +1860,19 @@ export default function DataContractDetails() {
               <Pencil className="mr-2 h-4 w-4" /> Edit Metadata
             </Button>
           )}
+          <Button
+            variant="outline"
+            onClick={runDqxValidation}
+            disabled={runningDqx}
+            size="sm"
+            title="Submit a one-off DQX validation. Production enforcement should live in the pipeline that produces the data; this button is for ad-hoc validation runs."
+          >
+            {runningDqx
+              ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              : <PlayCircle className="mr-2 h-4 w-4" />
+            }
+            Run DQX
+          </Button>
           <Button variant="outline" onClick={exportOdcs} size="sm"><Download className="mr-2 h-4 w-4" /> Export ODCS</Button>
           {canEditInPlace && (
             <Button variant="destructive" onClick={handleDelete} size="sm"><Trash2 className="mr-2 h-4 w-4" /> Delete</Button>

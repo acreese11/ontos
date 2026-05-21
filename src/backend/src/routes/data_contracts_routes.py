@@ -1936,6 +1936,114 @@ async def get_odcs_json(
     )
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Convenience trigger: run DQX validation for a contract.
+#
+# This is the "demo / one-off" path — not the only way validation can happen.
+# Federated pipelines pull /odcs.yaml on their own schedule and POST quality
+# metrics back. This endpoint exists so users can fire a validation on demand
+# from the UI (or the agent) without standing up a pipeline of their own.
+# ──────────────────────────────────────────────────────────────────────────────
+class DqxRunBody(BaseModel):
+    """Optional body for /dqx/run. All fields have safe defaults."""
+    ontos_base_url: Optional[str] = None
+    pipeline_id: str = "dqx_contract_validation"
+    schema_index: int = 0
+    write_quarantine: bool = True
+
+
+@router.post('/data-contracts/{contract_id}/dqx/run', status_code=202)
+async def run_dqx_validation(
+    contract_id: str,
+    request: Request,
+    db: DBSessionDep,
+    body: Optional[DqxRunBody] = None,
+    _: bool = Depends(PermissionChecker('data-contracts', FeatureAccessLevel.READ_WRITE)),
+):
+    """Submit a one-off DQX validation run for this contract.
+
+    Uses ``jobs.submit()`` for a transient run — no persistent JobsAPI job is
+    created, no install record is maintained, no orphans to clean up across
+    re-runs. Returns the Databricks run id and a deeplink for monitoring.
+    """
+    from src.common.manager_dependencies import get_jobs_manager
+
+    body = body or DqxRunBody()
+
+    # Resolve Ontos public URL (where the job will reach back to).
+    settings = request.app.state.settings
+    ontos_base_url = body.ontos_base_url or settings.ONTOS_PUBLIC_URL
+    if not ontos_base_url:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "ontos_base_url is not set. Provide it in the request body OR set "
+                "ONTOS_PUBLIC_URL in the app config so the DQX job can call back."
+            ),
+        )
+
+    jobs_manager = get_jobs_manager(request)
+
+    # Databricks Apps proxy rejects job runtime tokens; it accepts OAuth M2M
+    # tokens minted from the app's own SP credentials. We don't pass the raw
+    # values through job parameters — they'd be visible in run details and
+    # audit logs. Instead, the credentials live in a Databricks Secrets scope
+    # (bootstrapped at app startup), and we hand the job {{secrets/scope/key}}
+    # placeholders that Databricks substitutes at task launch.
+    if not (settings.DATABRICKS_CLIENT_ID and settings.DATABRICKS_CLIENT_SECRET):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "DATABRICKS_CLIENT_ID / DATABRICKS_CLIENT_SECRET are not set in the app "
+                "environment. Databricks Apps auto-inject these for deployed apps; for "
+                "local dev, set them in .env using a service principal that has CAN_USE "
+                "on the deployed Ontos app."
+            ),
+        )
+
+    # Submit as a transient one-off run (no persistent JobsAPI job created).
+    try:
+        run_id = jobs_manager.submit_workflow(
+            'dqx_contract_validation',
+            job_parameters={
+                'contract_id': contract_id,
+                'ontos_base_url': ontos_base_url,
+                'pipeline_id': body.pipeline_id,
+                'schema_index': str(body.schema_index),
+                'write_quarantine': 'true' if body.write_quarantine else 'false',
+                # The job pulls the OAuth M2M creds from a Databricks Secrets
+                # scope at runtime using its own runtime credentials. We pass
+                # only the scope+key NAMES (not values) — secret-ref
+                # substitution doesn't cascade through {{job.parameters.foo}}.
+                'databricks_host': (settings.DATABRICKS_HOST or '').rstrip('/'),
+                'secrets_scope': settings.APP_SECRETS_SCOPE,
+                'client_id_key': settings.APP_SECRETS_CLIENT_ID_KEY,
+                'client_secret_key': settings.APP_SECRETS_CLIENT_SECRET_KEY,
+            },
+            run_name_suffix=contract_id[:8],
+        )
+    except Exception as e:
+        logger.exception("Failed to submit DQX validation run for contract %s", contract_id)
+        raise HTTPException(status_code=500, detail=f"Failed to submit job: {type(e).__name__}: {e}")
+
+    # Build a deeplink to the run for the UI. Transient submits don't have a
+    # job_id; the run details URL still works at /jobs/runs/<run_id>.
+    monitor_url = None
+    host = (settings.DATABRICKS_HOST or '').rstrip('/')
+    if host:
+        if not host.startswith('http://') and not host.startswith('https://'):
+            host = f"https://{host}"
+        monitor_url = f"{host}/jobs/runs/{run_id}"
+
+    return {
+        'run_id': run_id,
+        'workflow_id': 'dqx_contract_validation',
+        'contract_id': contract_id,
+        'ontos_base_url': ontos_base_url,
+        'monitor_url': monitor_url,
+    }
+
+
 @router.post('/data-contracts/{contract_id}/link-assets', response_model=dict)
 async def auto_link_contract_schema_to_assets(
     contract_id: str,

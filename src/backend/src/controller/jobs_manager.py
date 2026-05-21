@@ -98,11 +98,12 @@ class JobsManager:
                 # Convert dependencies list to proper format
                 if 'dependencies' in spec_dict and isinstance(spec_dict['dependencies'], list):
                     # Dependencies should be a list of strings like ["pkg==1.0.0", ...]
-                    # Create Environment with proper client version
-                    # Note: compute.Environment doesn't support env_vars directly
-                    # Environment variables need to be passed via spark_conf or job run parameters
+                    # Allow the YAML to override the serverless client version
+                    # (e.g., '2' for Python 3.11) when a workflow needs deps that
+                    # don't support 3.10. Default keeps '1' for backward compat.
+                    client_version = str(spec_dict.get('client', '1'))
                     spec_obj = compute.Environment(
-                        client='1',  # Use default Databricks runtime
+                        client=client_version,
                         dependencies=spec_dict['dependencies']
                     )
                 else:
@@ -233,11 +234,12 @@ class JobsManager:
                 # Convert dependencies list to proper format
                 if 'dependencies' in spec_dict and isinstance(spec_dict['dependencies'], list):
                     # Dependencies should be a list of strings like ["pkg==1.0.0", ...]
-                    # Create Environment with proper client version
-                    # Note: compute.Environment doesn't support env_vars directly
-                    # Environment variables need to be passed via spark_conf or job run parameters
+                    # Allow the YAML to override the serverless client version
+                    # (e.g., '2' for Python 3.11) when a workflow needs deps that
+                    # don't support 3.10. Default keeps '1' for backward compat.
+                    client_version = str(spec_dict.get('client', '1'))
                     spec_obj = compute.Environment(
-                        client='1',  # Use default Databricks runtime
+                        client=client_version,
                         dependencies=spec_dict['dependencies']
                     )
                 else:
@@ -297,6 +299,144 @@ class JobsManager:
                 )
         
         self._client.jobs.update(job_id=job_id, new_settings=job_settings)
+
+    def submit_workflow(
+        self,
+        workflow_id: str,
+        job_parameters: Optional[Dict[str, str]] = None,
+        *,
+        run_name_suffix: Optional[str] = None,
+    ) -> int:
+        """Submit a one-off transient run for a workflow without creating a persistent job.
+
+        Reads the workflow's YAML definition, ensures the code is uploaded to the
+        workspace (via WorkspaceDeployer if available), and calls jobs.submit()
+        with task + environment specs derived from the YAML. Returns the submit
+        run_id. No JobsAPI job is created, so there's no install record to manage
+        and no orphan to clean up.
+
+        Compared to install_workflow + run_job, this is the right primitive for
+        ad-hoc / per-request executions (e.g., user-triggered DQX validations).
+        Use install_workflow when you need a scheduled or persistently-managed
+        job.
+        """
+        # 1. Deploy code if a deployer is wired.
+        if self._workspace_deployer:
+            workflow_dir = self._workflows_root / workflow_id
+            if workflow_dir.exists():
+                self._workspace_deployer.deploy_workflow(workflow_id, workflow_dir)
+                logger.info(f"Deployed workflow '{workflow_id}' to workspace for submit")
+        elif self._settings and self._settings.WORKSPACE_DEPLOYMENT_PATH:
+            logger.error(
+                "WORKSPACE_DEPLOYMENT_PATH is set but WorkspaceDeployer is not initialized; "
+                "submit will likely fail to read the python file at job runtime."
+            )
+
+        # 2. Read the YAML + build task/env specs.
+        wf_def = self._get_workflow_definition(workflow_id)
+        task_objs = self._build_tasks_from_definition(wf_def)
+
+        # Convert Task → SubmitTask. Same shape minus the persistent-job concerns.
+        # SDK accepts the Task subclass for submit() in practice, but explicit
+        # conversion is safer against future SDK shape drift.
+        submit_tasks: List[jobs.SubmitTask] = []
+        for t in task_objs:
+            submit_tasks.append(jobs.SubmitTask(
+                task_key=t.task_key,
+                spark_python_task=getattr(t, 'spark_python_task', None),
+                notebook_task=getattr(t, 'notebook_task', None),
+                python_wheel_task=getattr(t, 'python_wheel_task', None),
+                spark_jar_task=getattr(t, 'spark_jar_task', None),
+                environment_key=getattr(t, 'environment_key', None),
+                existing_cluster_id=getattr(t, 'existing_cluster_id', None),
+                timeout_seconds=getattr(t, 'timeout_seconds', None),
+                depends_on=getattr(t, 'depends_on', None),
+            ))
+
+        # Environments — same builder shape as install_workflow.
+        env_objs: List[jobs.JobEnvironment] = []
+        if isinstance(wf_def.get('environments'), list):
+            for env in wf_def['environments']:
+                if not isinstance(env, dict):
+                    continue
+                env_key = env.get('environment_key')
+                spec_dict = env.get('spec') or {}
+                if 'dependencies' in spec_dict and isinstance(spec_dict['dependencies'], list):
+                    client_version = str(spec_dict.get('client', '1'))
+                    spec_obj = compute.Environment(
+                        client=client_version,
+                        dependencies=spec_dict['dependencies'],
+                    )
+                else:
+                    try:
+                        spec_obj = compute.Environment(**spec_dict)
+                    except Exception:
+                        spec_obj = spec_dict
+                env_objs.append(jobs.JobEnvironment(environment_key=env_key, spec=spec_obj))
+
+        # 3. Resolve parameters: defaults from YAML, ad-hoc overrides on top.
+        merged_params: Dict[str, str] = {}
+        yaml_params = wf_def.get('parameters') or {}
+        if isinstance(yaml_params, dict):
+            merged_params.update({k: str(v) for k, v in yaml_params.items()})
+        if job_parameters:
+            merged_params.update({k: str(v) for k, v in job_parameters.items()})
+
+        # SubmitRun doesn't accept `parameters=` at the top level the way
+        # JobSettings does — but jobs.submit honors {{job.parameters.foo}} via
+        # parameter substitution from spark_python_task.parameters at the time
+        # of run. Since our YAML wires the task params with placeholders, the
+        # right shape is to pass merged params via `python_named_params` …
+        # except SubmitTask doesn't have that either. The reliable path is to
+        # rewrite the task parameters list, replacing `{{job.parameters.NAME}}`
+        # placeholders with their resolved values directly.
+        resolved_tasks: List[jobs.SubmitTask] = []
+        for st in submit_tasks:
+            new_st = st
+            spt = getattr(st, 'spark_python_task', None)
+            if spt and getattr(spt, 'parameters', None):
+                resolved = []
+                for p in spt.parameters:
+                    if isinstance(p, str) and p.startswith('{{job.parameters.') and p.endswith('}}'):
+                        name = p[len('{{job.parameters.'):-2]
+                        resolved.append(merged_params.get(name, ''))
+                    else:
+                        resolved.append(p)
+                new_spt = jobs.SparkPythonTask(
+                    python_file=spt.python_file,
+                    parameters=resolved,
+                    source=getattr(spt, 'source', None),
+                )
+                new_st = jobs.SubmitTask(
+                    task_key=st.task_key,
+                    spark_python_task=new_spt,
+                    notebook_task=st.notebook_task,
+                    python_wheel_task=st.python_wheel_task,
+                    spark_jar_task=st.spark_jar_task,
+                    environment_key=st.environment_key,
+                    existing_cluster_id=st.existing_cluster_id,
+                    timeout_seconds=st.timeout_seconds,
+                    depends_on=st.depends_on,
+                )
+            resolved_tasks.append(new_st)
+
+        # 4. Submit. SubmitRun does not need a job id; the run is self-contained.
+        run_name = f"{workflow_id}"
+        if run_name_suffix:
+            run_name = f"{workflow_id}-{run_name_suffix}"
+        submit_kwargs: Dict[str, Any] = {
+            'run_name': run_name,
+            'tasks': resolved_tasks,
+        }
+        if env_objs:
+            submit_kwargs['environments'] = env_objs
+        if wf_def.get('timeout_seconds'):
+            submit_kwargs['timeout_seconds'] = int(wf_def['timeout_seconds'])
+
+        wait = self._client.jobs.submit(**submit_kwargs)
+        run_id = int(wait.run_id)
+        logger.info(f"Submitted transient run for workflow '{workflow_id}' as run_id={run_id}")
+        return run_id
 
     def remove_workflow(self, job_id: int) -> None:
         self._client.jobs.delete(job_id=job_id)

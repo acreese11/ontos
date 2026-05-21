@@ -57,6 +57,23 @@ class Settings(BaseSettings):
     DATABRICKS_TOKEN: Optional[str] = None  # Optional since handled by SDK
     DATABRICKS_HTTP_PATH: Optional[str] = None # Will be computed by validator
     DATABRICKS_APP_NAME: str = Field("ontos", env='DATABRICKS_APP_NAME')  # Name of the Databricks App
+    # Public URL Databricks-side jobs use to call back to Ontos (contract pull,
+    # quality-item POST). Set this to the deployed Databricks Apps URL — local
+    # dev should also point at the deployed app since jobs always run remotely.
+    ONTOS_PUBLIC_URL: Optional[str] = Field(None, env='ONTOS_PUBLIC_URL')
+    # OAuth M2M credentials for the app's service principal. Databricks Apps
+    # auto-injects these into the deployed app's env. Forwarded to jobs that
+    # need to call back into the app — the Apps proxy rejects job runtime
+    # tokens but accepts M2M OAuth tokens minted from these credentials.
+    DATABRICKS_CLIENT_ID: Optional[str] = Field(None, env='DATABRICKS_CLIENT_ID')
+    DATABRICKS_CLIENT_SECRET: Optional[str] = Field(None, env='DATABRICKS_CLIENT_SECRET')
+    # Databricks Secrets scope where the app stores forwardable credentials
+    # (auto-bootstrapped on startup). Jobs receive {{secrets/scope/key}}
+    # placeholders that Databricks substitutes at task launch — the raw
+    # secret never appears in run details or audit logs.
+    APP_SECRETS_SCOPE: str = Field("ontos-app", env='APP_SECRETS_SCOPE')
+    APP_SECRETS_CLIENT_ID_KEY: str = Field("client_id", env='APP_SECRETS_CLIENT_ID_KEY')
+    APP_SECRETS_CLIENT_SECRET_KEY: str = Field("client_secret", env='APP_SECRETS_CLIENT_SECRET_KEY')
 
     # Environment
     ENV: str = "PROD"  # LOCAL, DEV, PROD

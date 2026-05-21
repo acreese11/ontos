@@ -385,6 +385,16 @@ def initialize_managers(app: FastAPI):
         # --- Ensure default team and project exist for admins ---
         app.state.settings_manager.ensure_default_team_and_project()
 
+        # --- Bootstrap Databricks Secrets scope for forwardable SP creds ---
+        # Jobs spawned by Ontos need OAuth M2M creds to call back into the app.
+        # Writing them to a Databricks Secrets scope lets us pass
+        # {{secrets/scope/key}} placeholders as job params instead of raw values.
+        try:
+            from src.common.app_secrets import bootstrap_app_secrets
+            bootstrap_app_secrets(settings, ws_client)
+        except Exception as e:
+            logger.warning("App-secrets bootstrap failed (non-fatal): %s", e)
+
         # --- Commit session potentially used for default role creation ---
         # This commit is crucial AFTER all managers are initialized AND
         # default roles are potentially created by the SettingsManager
