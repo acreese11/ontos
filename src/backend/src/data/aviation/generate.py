@@ -142,11 +142,22 @@ def materialize_to_uc(
     dataframes: dict,
     warehouse_id: str | None = None,
     catalog: str = "safe_skies",
-    profile: str = "areese",
+    profile: str | None = None,
 ) -> List[WriteResult]:
-    """Upload every dataframe to UC and materialize as a Delta table."""
-    warehouse_id = warehouse_id or os.environ.get("DATABRICKS_WAREHOUSE_ID") or "6b017b77fb6a5df9"
-    w = WorkspaceClient(profile=profile)
+    """Upload every dataframe to UC and materialize as a Delta table.
+
+    `profile` defaults to DATABRICKS_CONFIG_PROFILE if not provided. If neither
+    is set, the SDK falls through its standard auth chain (DEFAULT profile,
+    env vars, etc.).
+    """
+    warehouse_id = warehouse_id or os.environ.get("DATABRICKS_WAREHOUSE_ID")
+    if not warehouse_id:
+        raise RuntimeError(
+            "DATABRICKS_WAREHOUSE_ID is not set and no warehouse_id was passed. "
+            "Set DATABRICKS_WAREHOUSE_ID to the target warehouse id."
+        )
+    profile = profile or os.environ.get("DATABRICKS_CONFIG_PROFILE")
+    w = WorkspaceClient(profile=profile) if profile else WorkspaceClient()
 
     schemas = sorted({s for s, _ in dataframes.keys()})
     print(f"Ensuring volume seed dirs for: {schemas}")

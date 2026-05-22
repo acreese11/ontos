@@ -33,6 +33,12 @@ variables:
   volume_name:
     description: "Name of the volume to use"
     default: "app_files"
+  lakebase_instance_name:
+    description: "Name of the Lakebase Postgres instance"
+    default: "ontosdb"
+  serving_endpoint_name:
+    description: "Name of the LLM serving endpoint"
+    default: "databricks-claude-sonnet-4-5"
   app_config:
     type: complex
     description: "Configuration for Ontos"
@@ -71,17 +77,17 @@ resources:
           description: "Lakebase database for app metadata"
           database:
             database_name: "databricks_postgres"
-            instance_name: "ontosdb"
+            instance_name: ${var.lakebase_instance_name}
             permission: "CAN_CONNECT_AND_CREATE"
         - name: "serving-endpoint"
           description: "LLM serving endpoint for AI features"
           serving_endpoint:
-            name: "databricks-claude-sonnet-4-5"
+            name: ${var.serving_endpoint_name}
             permission: "CAN_QUERY"
         - name: "volume"
           description: "Volume for app file storage"
           uc_securable:
-            securable_full_name: "areese_demo_catalog.ontos.ontos_volume"
+            securable_full_name: "${var.catalog_name}.${var.schema_name}.${var.volume_name}"
             securable_type: "VOLUME"
             permission: "WRITE_VOLUME"
       permissions:
@@ -99,3 +105,13 @@ targets:
       catalog_name: "app_data_prod"
       schema_name: "app_ontos_prod"
       volume_name: "app_files_prod"
+  dais-aws:
+    workspace:
+      host: https://fevm-classic-stable-cy82rl.cloud.databricks.com
+    variables:
+      sql_warehouse_id: "27c7b0f923579921"
+      catalog_name: "safe_skies"
+      schema_name: "app_ontos"
+      volume_name: "app_files"
+      lakebase_instance_name: "ontosdb"
+      serving_endpoint_name: "databricks-claude-opus-4-7"

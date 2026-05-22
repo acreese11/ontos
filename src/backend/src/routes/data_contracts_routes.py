@@ -1970,17 +1970,27 @@ async def run_dqx_validation(
 
     body = body or DqxRunBody()
 
-    # Resolve Ontos public URL (where the job will reach back to).
+    # Resolve the callback URL the DQX job will use to reach this app.
+    # Derivation order:
+    #   1. Explicit override from the request body (useful for local dev with
+    #      a tunneled URL, or when posting from a script).
+    #   2. X-Forwarded-Host / X-Forwarded-Proto set by the Databricks Apps
+    #      proxy — the canonical source for "what URL did the user hit?".
+    #   3. The request URL itself (request.url.netloc) — covers localhost
+    #      and any case where the proxy headers aren't present.
+    # This avoids the previous ONTOS_PUBLIC_URL env var, which forced a
+    # config change per deploy target.
     settings = request.app.state.settings
-    ontos_base_url = body.ontos_base_url or settings.ONTOS_PUBLIC_URL
-    if not ontos_base_url:
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                "ontos_base_url is not set. Provide it in the request body OR set "
-                "ONTOS_PUBLIC_URL in the app config so the DQX job can call back."
-            ),
-        )
+    if body.ontos_base_url:
+        ontos_base_url = body.ontos_base_url
+    else:
+        fwd_host = request.headers.get("x-forwarded-host")
+        fwd_proto = request.headers.get("x-forwarded-proto")
+        if fwd_host:
+            scheme = fwd_proto or request.url.scheme
+            ontos_base_url = f"{scheme}://{fwd_host}"
+        else:
+            ontos_base_url = f"{request.url.scheme}://{request.url.netloc}"
 
     jobs_manager = get_jobs_manager(request)
 

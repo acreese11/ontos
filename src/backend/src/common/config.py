@@ -57,10 +57,6 @@ class Settings(BaseSettings):
     DATABRICKS_TOKEN: Optional[str] = None  # Optional since handled by SDK
     DATABRICKS_HTTP_PATH: Optional[str] = None # Will be computed by validator
     DATABRICKS_APP_NAME: str = Field("ontos", env='DATABRICKS_APP_NAME')  # Name of the Databricks App
-    # Public URL Databricks-side jobs use to call back to Ontos (contract pull,
-    # quality-item POST). Set this to the deployed Databricks Apps URL — local
-    # dev should also point at the deployed app since jobs always run remotely.
-    ONTOS_PUBLIC_URL: Optional[str] = Field(None, env='ONTOS_PUBLIC_URL')
     # OAuth M2M credentials for the app's service principal. Databricks Apps
     # auto-injects these into the deployed app's env. Forwarded to jobs that
     # need to call back into the app — the Apps proxy rejects job runtime

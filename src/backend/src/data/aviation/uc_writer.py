@@ -10,6 +10,7 @@ Workflow per table:
 from __future__ import annotations
 
 import io
+import os
 import time
 from dataclasses import dataclass
 from typing import Optional
@@ -18,7 +19,13 @@ import polars as pl
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.sql import StatementState
 
-VOLUME_BASE = "/Volumes/areese_demo_catalog/ontos/ontos_volume/safe_skies_seed"
+# Where Parquet files get staged before being materialized as Delta. Override
+# with AVIATION_SEED_VOLUME_BASE when running against a different workspace
+# layout. Path layout: /Volumes/<catalog>/<schema>/<volume>/<staging-dir>.
+VOLUME_BASE = os.environ.get(
+    "AVIATION_SEED_VOLUME_BASE",
+    "/Volumes/safe_skies/app_ontos/app_files/safe_skies_seed",
+)
 
 
 @dataclass

@@ -42,11 +42,6 @@ env:
   - name: "LLM_ENDPOINT"
     valueFrom: "serving-endpoint"
 
-  # Public URL that Databricks jobs use to call back into Ontos
-  # (contract pull + quality-item POST).
-  - name: "ONTOS_PUBLIC_URL"
-    value: "https://ontos-4279470166116430.10.azure.databricksapps.com"
-
   # Workspace path where JobsManager uploads workflow code so submitted jobs
   # can read it from compute that doesn't share the app container's filesystem.
   # The app's SP must have CAN_WRITE on the parent directory.
