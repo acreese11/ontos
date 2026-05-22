@@ -5,9 +5,10 @@ format: "MULTI_TASK"
 environments:
   - environment_key: "dqx-env"
     spec:
-      # client=2 → Python 3.11 serverless runtime. datacontract-cli requires
-      # Python 3.11+, so the default client=1 (3.10) silently skips the wheel.
-      client: "2"
+      # Track the newest serverless environment so the Python floor stays
+      # current. We deliberately don't pin datacontract-cli — let pip resolve
+      # the highest version compatible with this client's Python.
+      client: "5"
       dependencies:
         - "databricks-labs-dqx>=0.11.0"
         - "datacontract-cli"

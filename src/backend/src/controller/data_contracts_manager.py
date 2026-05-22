@@ -16,6 +16,43 @@ def _is_valid_uuid(value: str) -> bool:
     except (ValueError, AttributeError):
         return False
 
+
+# Unity Catalog physical type for each ODCS logicalType. DQX requires a UC
+# type on every property to generate its has_valid_schema rule (it builds a
+# CREATE TABLE DDL from these). ODCS itself doesn't require physicalType, so
+# we derive it on emit when missing. See: contract_rules_generator.py:493 in
+# databricks-labs-dqx.
+_LOGICAL_TO_UC_PHYSICAL = {
+    'string':    'STRING',
+    'integer':   'BIGINT',
+    'number':    'DOUBLE',
+    'boolean':   'BOOLEAN',
+    'date':      'DATE',
+    'timestamp': 'TIMESTAMP',
+    'object':    'STRUCT',
+    'array':     'ARRAY',
+}
+
+
+def _coerce_tag_list(value) -> list:
+    """Normalize a DB-stored tags field to a list for ODCS emit.
+
+    Several Text columns (SchemaObjectDb.tags, DataQualityCheckDb.tags) hold a
+    JSON-encoded list as a plain string. ODCS pydantic models expect a real
+    list, so we parse strings on read. Returns [] for None / empty / unparseable.
+    """
+    if not value:
+        return []
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, list) else []
+        except (json.JSONDecodeError, ValueError):
+            return []
+    return []
+
 import yaml
 from sqlalchemy.orm import Session
 
@@ -957,8 +994,7 @@ class DataContractsManager(DeliveryMixin, SearchableAsset):
                 if getattr(schema_obj, 'description', None):
                     schema_dict['description'] = schema_obj.description
                 if getattr(schema_obj, 'tags', None):
-                    # Tags are now rich objects managed by TagsManager
-                    schema_dict['tags'] = schema_obj.tags or []
+                    schema_dict['tags'] = _coerce_tag_list(schema_obj.tags)
                     
                 # Add properties with full ODCS field support
                 if hasattr(schema_obj, 'properties') and schema_obj.properties:
@@ -972,6 +1008,8 @@ class DataContractsManager(DeliveryMixin, SearchableAsset):
                             prop_dict['logicalType'] = prop.logical_type
                         if prop.physical_type:
                             prop_dict['physicalType'] = prop.physical_type
+                        elif prop.logical_type and prop.logical_type.lower() in _LOGICAL_TO_UC_PHYSICAL:
+                            prop_dict['physicalType'] = _LOGICAL_TO_UC_PHYSICAL[prop.logical_type.lower()]
                         if prop.required is not None:
                             prop_dict['required'] = prop.required
                         # Only emit 'unique' when True; omit when False to avoid implying explicit uniqueness
@@ -1152,7 +1190,7 @@ class DataContractsManager(DeliveryMixin, SearchableAsset):
                                     if check.unit:
                                         quality_dict['unit'] = check.unit
                                     if check.tags:
-                                        quality_dict['tags'] = check.tags
+                                        quality_dict['tags'] = _coerce_tag_list(check.tags)
                                     if check.query:
                                         quality_dict['query'] = check.query
                                     if check.engine:
@@ -1250,7 +1288,7 @@ class DataContractsManager(DeliveryMixin, SearchableAsset):
                         if check.unit:
                             quality_dict['unit'] = check.unit
                         if check.tags:
-                            quality_dict['tags'] = check.tags
+                            quality_dict['tags'] = _coerce_tag_list(check.tags)
                         if check.query:
                             quality_dict['query'] = check.query
                         if check.engine:

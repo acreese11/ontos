@@ -333,7 +333,7 @@ class JobsManager:
             )
 
         # 2. Read the YAML + build task/env specs.
-        wf_def = self._get_workflow_definition(workflow_id)
+        wf_def = self._get_workflow_definition(workflow_id, job_cluster_id=None)
         task_objs = self._build_tasks_from_definition(wf_def)
 
         # Convert Task → SubmitTask. Same shape minus the persistent-job concerns.

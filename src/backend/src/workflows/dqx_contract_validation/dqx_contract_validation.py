@@ -36,6 +36,33 @@ from databricks.sdk import WorkspaceClient
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Workaround for databrickslabs/dqx#1168.
+#
+# DQX 0.14's contract_rules_generator.py has an UNCONDITIONAL top-of-file
+# `from databricks.labs.dqx.llm.llm_engine import DQLLMEngine` — used only as
+# a type annotation (`DQLLMEngine | None`). When [llm] extras aren't
+# installed, that import raises ImportError, which a broad try/except in
+# profiler/generator.py catches and turns into `DATACONTRACT_ENABLED = False`.
+# DQGenerator.generate_rules_from_contract then raises MissingParameterError
+# with a misleading "install datacontract-cli" message.
+#
+# We stub the module into sys.modules before any DQX import runs. The
+# annotation resolves to the stub class; runtime never touches it because we
+# call generate_rules_from_contract with process_text_rules=False (the only
+# path that actually instantiates DQLLMEngine).
+#
+# Delete this once databrickslabs/dqx#1168 ships and we bump DQX past it.
+# ──────────────────────────────────────────────────────────────────────────────
+import types as _types  # noqa: E402
+if "databricks.labs.dqx.llm.llm_engine" not in sys.modules:
+    _llm_stub = _types.ModuleType("databricks.labs.dqx.llm.llm_engine")
+    class _StubDQLLMEngine:  # noqa: N801
+        """Stub for databrickslabs/dqx#1168 — never instantiated."""
+    _llm_stub.DQLLMEngine = _StubDQLLMEngine
+    sys.modules["databricks.labs.dqx.llm.llm_engine"] = _llm_stub
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Auth + Ontos HTTP helpers
 # ──────────────────────────────────────────────────────────────────────────────
 def _read_secret(runtime_ws: WorkspaceClient, scope: str, key: str) -> str:
@@ -247,6 +274,11 @@ def main() -> None:
             generate_schema_validation=True,
             generate_predefined_rules=True,
             process_text_rules=False,
+            # Contract is the consumer's OUTPUT GUARANTEE, not a mirror of every
+            # producer-side column. Permissive mode requires the contract's
+            # columns to exist with matching types, but allows extras and any
+            # order — which is the right semantic for ODCS contracts.
+            strict_schema_validation=False,
         )
     finally:
         try:
