@@ -136,8 +136,23 @@ DQX v0.11+ consumes ODCS natively — no compiler needed (corrected per Alan). W
 ### Phase 4b — DQX quarantine pipeline
 Databricks job: bronze → DQX rules from contract → silver/quarantine → gold. Mix pre-seeded dirty rows. Wire results to Ontos.
 
-### Phase 5a — Genie space + GenieSpacesManager
-Activate the partial Genie infra. Build missing `genie_spaces_manager.py`. Create real Genie space backed by "Global Flight Ops" gold tables. Push trust signals as Genie space metadata.
+### Phase 5a — Genie space + trust signals  *(scope revised 2026-05-22)*
+**Update**: most of this is already shipped. Auditing the codebase found:
+- `src/backend/src/routes/data_product_routes.py:2061` — `POST /api/data-products/genie-space` endpoint exists
+- `DataProductsManager.initiate_genie_space_creation()` — collects datasets from output ports, builds metadata blob, kicks off background task
+- `src/backend/src/common/genie_client.py` — calls the real Databricks API (`POST /api/2.0/genie/spaces`), collects rich-text metadata from contracts + glossary terms, formats it as Genie instructions, persists `space_id`/URL
+- Frontend "Create Genie Space" button on product detail (and bulk-select on the data-products list) is wired
+
+The plan's "build missing `genie_spaces_manager.py`" assumption is stale; the manager exists as a method on `DataProductsManager` calling a `genie_client` helper module.
+
+**What's actually needed for the demo:**
+
+1. **Smoke-test the live API call against `safe_skies`.** Databricks's Genie Spaces API surface has shifted over the past year; the current code path is `/api/2.0/genie/spaces` with `{display_name, description, tables, instructions}`. Verify the response shape matches what `genie_client.create_genie_space` parses for `space_id`. Likely-to-bite items: the endpoint may now want `catalog_name`/`schema_name` separately, or `dataset_ids` instead of `tables.full_name`.
+2. **Strengthen trust signals in the instructions blob.** Today `format_metadata_for_genie` builds business-glossary context. Add: contract version, last DQX quality score + measured_at, certified status. Goal: when Genie answers, the cited sources tie back visibly to Ontos's contract.
+3. **Surface the space URL on the product page.** Confirm the persisted `space_id`/URL is rendered after creation (likely already done — verify).
+4. **Optional polish**: short-text-rule for the LLM that says "When citing sources, mention the certified contract from Ontos at <link>." Slots into the Demo 5 narration.
+
+Time estimate revised: **~1 day** (was ~3). Bulk of work is verification + a small instructions-blob enhancement, not a manager rewrite.
 
 ### Phase 5b — Real Lakehouse Monitor + drift alert
 TimeSeries monitor on a gold flight-volume table. Drift threshold + Slack/email alert. Test the "Flight volume dropped 40% in last hour" scenario fires.
