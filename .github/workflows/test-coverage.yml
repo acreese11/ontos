@@ -391,6 +391,30 @@ jobs:
         run: |
           hatch -e dev run python ../scripts/check-alembic-heads.py
 
+  check-user-api-scopes-parity:
+    name: User API Scopes Parity
+    runs-on:
+      group: databrickslabs-protected-runner-group
+      labels: linux-ubuntu-latest
+    timeout-minutes: 5
+    # Verifies that src/databricks.yaml (bundle deploy) and src/manifest.yaml
+    # (marketplace install) declare the same user_api_scopes. Drift here
+    # silently breaks Schema Importer and other OBO-dependent UC features on
+    # whichever install path is missing a scope.
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - uses: ./.github/actions/setup-python-jfrog
+        with:
+          python-version: '3.10'
+
+      - name: Install PyYAML
+        run: pip install pyyaml
+
+      - name: Run scope parity check
+        run: python scripts/check-user-api-scopes-parity.py
+
   frontend-build:
     name: Frontend Build Check
     runs-on:

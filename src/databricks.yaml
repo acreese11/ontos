@@ -39,26 +39,6 @@ variables:
   serving_endpoint_name:
     description: "Name of the LLM serving endpoint"
     default: "databricks-claude-sonnet-4-5"
-  app_config:
-    type: complex
-    description: "Configuration for Ontos"
-    default:
-      command:
-        - "uvicorn"
-        - "src.app:app"
-        - "--host"
-        - "0.0.0.0"
-        - "--port"
-        - "8000"
-      env:
-        - name: "DATABRICKS_WAREHOUSE_ID"
-          value: ${var.sql_warehouse_id}
-        - name: "DATABRICKS_CATALOG"
-          value: ${var.catalog_name}
-        - name: "DATABRICKS_SCHEMA"
-          value: ${var.schema_name}
-        - name: "DATABRICKS_VOLUME"
-          value: ${var.volume_name}
 
 resources:
   apps:
@@ -66,7 +46,36 @@ resources:
       name: "ontos"
       description: "Ontos"
       source_code_path: "."
-      config: ${var.app_config}
+      # Note: app command + runtime env live in src/app.yaml (read by the
+      # Apps platform at app start). The bundle's apps.<name>.config field
+      # is silently dropped by databricks bundle deploy (warns "unknown
+      # field: config"), so any command/env declared here would be ignored.
+      # Bundle variables (catalog_name, schema_name, etc.) flow into the
+      # resources block below; src/app.yaml uses valueFrom: "<resource>" to
+      # read bound values at runtime.
+      #
+      # User-delegated OAuth scopes the app needs to call Databricks APIs
+      # on behalf of the logged-in user. Without these, features like
+      # Schema Importer and AI-assisted contract authoring fail at the
+      # SDK layer with a misleading
+      #   "Provided OAuth token does not have required scopes: unity-catalog"
+      # which actually means "this token doesn't carry any of the granular
+      # catalog.* scopes." Declaring the granular scopes below is the fix —
+      # the legacy aggregate scope cannot be declared at all.
+      #
+      # This set MUST match the marketplace `manifest.yaml` (excluding the
+      # platform-injected `iam.*` defaults, which the update API rejects if
+      # declared here). CI enforces parity via
+      # scripts/check-user-api-scopes-parity.py.
+      user_api_scopes:
+        - "sql"
+        - "serving.serving-endpoints"
+        - "files.files"
+        - "dashboards.genie"
+        - "catalog.connections"
+        - "catalog.catalogs:read"
+        - "catalog.schemas:read"
+        - "catalog.tables:read"
       resources:
         - name: "sql-warehouse"
           description: "SQL warehouse for the app"
