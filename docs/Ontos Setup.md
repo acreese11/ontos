@@ -469,15 +469,42 @@ Once these hostnames are added, the deployment of the app should be able to proc
 
 ### Solve Scope Change Issues
 
-Databricks Apps uses a [Scope-based Security](https://docs.databricks.com/aws/en/dev-tools/databricks-apps/auth#scope-based-security-and-privilege-escalation) model. When deploying the app from the Marketplace, these are defined in the [Manifest YAML](https://github.com/databrickslabs/ontos/blob/main/src/manifest.yaml) file and cannot be changed currently without recreating the app's marketplace listing. But for installations using the source code, you need to configure the scopes manually in the Apps UI during the Custom App installation process (explained above). 
+Databricks Apps uses a [Scope-based Security](https://docs.databricks.com/aws/en/dev-tools/databricks-apps/auth#scope-based-security-and-privilege-escalation) model. The user-delegated (OBO) scopes the app requests are declared in two places, depending on install path:
 
-When you modify these scopes later on, they are NOT automatically available to the app! Recall that each user has to accept the current scopes once when the app is opened first. That information is stored in the browser cookie storage and reused from there. You may see an error like the following in the app or its logs:
+- **Marketplace install** — `src/manifest.yaml` `user_api_scopes`.
+- **Bundle deploy (git repo)** — `src/databricks.yaml` at `resources.apps.ontos.user_api_scopes`.
+
+Both files MUST declare the same scopes (excluding the platform-injected `iam.current-user:read` and `iam.access-control:read` defaults). The CI job `User API Scopes Parity` enforces this. The two files have drifted in the past — when they did, bundle-deployed instances served OBO tokens that lacked the granular `catalog.*` scopes, so Schema Importer and other UC-touching features failed at the SDK call with:
 
 ```
 ERROR - Error fetching catalogs.list: Provided OAuth token does not have required scopes: unity-catalog
 ```
 
-This can be caused by a later change of scopes with the cookie missing the update. The fix is to remove the cookie for the app's URL in the browser and reloaded that page. It MUST then ask the user again to accept the current scopes, now with the latest ones present. After that, the error should go away.
+That message is misleading. The legacy aggregate `unity-catalog` scope cannot be declared in modern Apps `user_api_scopes` — the update API rejects it — and is not actually required. The error means the OBO token carried *none* of the granular catalog scopes the SDK call would accept. The fix is to make sure `catalog.catalogs:read`, `catalog.schemas:read`, `catalog.tables:read` (and friends) are declared in whichever YAML drives your install.
+
+When you modify declared scopes after a user has already authorized the app, that user's token will not automatically carry the new scopes. Each user has to accept the current scopes once when the app is opened. The accepted set is recorded *both* in the browser cookie storage *and* at the workspace identity tier ("Authorized apps" in user settings). Clearing the browser cookie alone is not always enough — you may also need to revoke the app in **User Settings → Personal → Authorized apps** before the next page load will prompt fresh consent.
+
+### Service Principal Lost Schema Access After Apps Update
+
+If the app starts and shows the maintenance page **"Service Temporarily Unavailable — could not connect to the database during startup"**, with logs like
+
+```
+psycopg2.errors.InvalidSchemaName: no schema has been selected to create in
+```
+
+then the Lakebase platform has stripped the app SP's grants on the Ontos schema. This happens when the `database` resource is unbound from the app — most commonly when someone runs `databricks apps update --json '{...}'` with a partial body that omits the `resources` array. The PUT semantics replace the whole spec; the resources binding disappears; Lakebase reassigns SP-owned objects to the workspace admin and revokes the SP's schema-level grants. Bundle deploys (which preserve the binding) and `apps stop`/`apps start` cycles do **not** trigger this.
+
+Run the recovery script to re-grant USAGE/CREATE/SELECT/INSERT/UPDATE/DELETE to the SP on the existing schema:
+
+```sh
+PROFILE=<your-cli-profile> \
+INSTANCE=<lakebase-instance-name> \
+SP_UUID=<app-service-principal-client-id> \
+SCHEMA=app_ontos \
+scripts/recover-lakebase-sp-access.sh
+```
+
+To avoid hitting this in the first place: never use `databricks apps update --json` with a partial body. Change scopes and resources via `databricks bundle deploy` (or the marketplace install flow), both of which preserve the resource binding.
 
 ### Fix Access for Databricks Reader/Writer
 
