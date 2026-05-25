@@ -1948,7 +1948,10 @@ class DqxRunBody(BaseModel):
     """Optional body for /dqx/run. All fields have safe defaults."""
     ontos_base_url: Optional[str] = None
     pipeline_id: str = "dqx_contract_validation"
-    schema_index: int = 0
+    # When None (default), one run is submitted per schema in the contract.
+    # When an int, only that schema is validated — used for targeted re-runs
+    # from agents/scripts.
+    schema_index: Optional[int] = None
     write_quarantine: bool = True
 
 
@@ -1958,13 +1961,19 @@ async def run_dqx_validation(
     request: Request,
     db: DBSessionDep,
     body: Optional[DqxRunBody] = None,
+    contracts_manager: DataContractsManager = Depends(get_data_contracts_manager),
     _: bool = Depends(PermissionChecker('data-contracts', FeatureAccessLevel.READ_WRITE)),
 ):
-    """Submit a one-off DQX validation run for this contract.
+    """Submit DQX validation run(s) for this contract.
 
-    Uses ``jobs.submit()`` for a transient run — no persistent JobsAPI job is
+    Default behavior is one run per schema in the contract (typically one run
+    per output table). Pass ``schema_index`` in the body to validate a single
+    schema instead.
+
+    Uses ``jobs.submit()`` for transient runs — no persistent JobsAPI job is
     created, no install record is maintained, no orphans to clean up across
-    re-runs. Returns the Databricks run id and a deeplink for monitoring.
+    re-runs. Returns the list of submitted runs with their schema names and
+    deeplinks for monitoring.
     """
     from src.common.manager_dependencies import get_jobs_manager
 
@@ -2011,46 +2020,97 @@ async def run_dqx_validation(
             ),
         )
 
-    # Submit as a transient one-off run (no persistent JobsAPI job created).
-    try:
-        run_id = jobs_manager.submit_workflow(
-            'dqx_contract_validation',
-            job_parameters={
-                'contract_id': contract_id,
-                'ontos_base_url': ontos_base_url,
-                'pipeline_id': body.pipeline_id,
-                'schema_index': str(body.schema_index),
-                'write_quarantine': 'true' if body.write_quarantine else 'false',
-                # The job pulls the OAuth M2M creds from a Databricks Secrets
-                # scope at runtime using its own runtime credentials. We pass
-                # only the scope+key NAMES (not values) — secret-ref
-                # substitution doesn't cascade through {{job.parameters.foo}}.
-                'databricks_host': (settings.DATABRICKS_HOST or '').rstrip('/'),
-                'secrets_scope': settings.APP_SECRETS_SCOPE,
-                'client_id_key': settings.APP_SECRETS_CLIENT_ID_KEY,
-                'client_secret_key': settings.APP_SECRETS_CLIENT_SECRET_KEY,
-            },
-            run_name_suffix=contract_id[:8],
+    # Resolve which schemas to validate. The job runs once per schema (each
+    # schema typically maps to one output table) so a multi-port contract
+    # exercises every port.
+    contract = data_contract_repo.get_with_all(db, id=contract_id)
+    if contract is None:
+        raise HTTPException(status_code=404, detail=f"Contract {contract_id} not found")
+    schema_objects = list(contract.schema_objects or [])
+    if not schema_objects:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Contract {contract_id} has no schemas; nothing to validate.",
         )
-    except Exception as e:
-        logger.exception("Failed to submit DQX validation run for contract %s", contract_id)
-        raise HTTPException(status_code=500, detail=f"Failed to submit job: {type(e).__name__}: {e}")
 
-    # Build a deeplink to the run for the UI. Transient submits don't have a
-    # job_id; the run details URL still works at /jobs/runs/<run_id>.
-    monitor_url = None
+    if body.schema_index is not None:
+        if body.schema_index < 0 or body.schema_index >= len(schema_objects):
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"schema_index {body.schema_index} out of range; "
+                    f"contract has {len(schema_objects)} schemas."
+                ),
+            )
+        target_indices = [body.schema_index]
+    else:
+        target_indices = list(range(len(schema_objects)))
+
     host = (settings.DATABRICKS_HOST or '').rstrip('/')
-    if host:
-        if not host.startswith('http://') and not host.startswith('https://'):
-            host = f"https://{host}"
-        monitor_url = f"{host}/jobs/runs/{run_id}"
+    if host and not (host.startswith('http://') or host.startswith('https://')):
+        host = f"https://{host}"
+
+    runs: list[dict] = []
+    failures: list[dict] = []
+    for idx in target_indices:
+        schema_obj = schema_objects[idx]
+        try:
+            run_id = jobs_manager.submit_workflow(
+                'dqx_contract_validation',
+                job_parameters={
+                    'contract_id': contract_id,
+                    'ontos_base_url': ontos_base_url,
+                    'pipeline_id': body.pipeline_id,
+                    'schema_index': str(idx),
+                    'write_quarantine': 'true' if body.write_quarantine else 'false',
+                    # The job pulls the OAuth M2M creds from a Databricks Secrets
+                    # scope at runtime using its own runtime credentials. We pass
+                    # only the scope+key NAMES (not values) — secret-ref
+                    # substitution doesn't cascade through {{job.parameters.foo}}.
+                    'databricks_host': host.removeprefix('https://').removeprefix('http://') if host else '',
+                    'secrets_scope': settings.APP_SECRETS_SCOPE,
+                    'client_id_key': settings.APP_SECRETS_CLIENT_ID_KEY,
+                    'client_secret_key': settings.APP_SECRETS_CLIENT_SECRET_KEY,
+                },
+                run_name_suffix=f"{contract_id[:8]}-{schema_obj.name or f'schema{idx}'}",
+            )
+        except Exception as e:
+            logger.exception(
+                "Failed to submit DQX validation run for contract %s schema_index=%d (%s)",
+                contract_id, idx, schema_obj.name,
+            )
+            failures.append({
+                'schema_index': idx,
+                'schema_name': schema_obj.name,
+                'error': f"{type(e).__name__}: {e}",
+            })
+            continue
+        runs.append({
+            'schema_index': idx,
+            'schema_name': schema_obj.name,
+            'physical_name': schema_obj.physical_name,
+            'run_id': run_id,
+            'monitor_url': f"{host}/jobs/runs/{run_id}" if host else None,
+        })
+
+    # If every submission failed, surface a 500 — partial success is reported
+    # via the failures list so the UI can show which schemas didn't submit.
+    if runs == [] and failures:
+        raise HTTPException(
+            status_code=500,
+            detail=f"All {len(failures)} DQX submissions failed; first error: {failures[0]['error']}",
+        )
 
     return {
-        'run_id': run_id,
         'workflow_id': 'dqx_contract_validation',
         'contract_id': contract_id,
         'ontos_base_url': ontos_base_url,
-        'monitor_url': monitor_url,
+        'runs': runs,
+        'failures': failures,
+        # Legacy single-run fields for any pre-existing UI integrations.
+        # When multiple schemas are submitted these reflect the first run.
+        'run_id': runs[0]['run_id'] if runs else None,
+        'monitor_url': runs[0]['monitor_url'] if runs else None,
     }
 
 

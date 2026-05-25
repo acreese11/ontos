@@ -832,16 +832,24 @@ export default function DataContractDetails() {
         toast({ title: 'DQX validation not submitted', description: detail, variant: 'destructive' })
         return
       }
-      const monitorUrl: string | null = body?.monitor_url || null
+      const runs: Array<{ schema_name: string; run_id: number; monitor_url: string | null }> = body?.runs || []
+      const failures: Array<{ schema_name: string; error: string }> = body?.failures || []
+      const firstMonitorUrl: string | null = runs[0]?.monitor_url || body?.monitor_url || null
+      const description = runs.length > 1
+        ? `Submitted ${runs.length} runs (one per schema: ${runs.map(r => r.schema_name).join(', ')}). The quality panel will refresh as metrics arrive.`
+        : runs.length === 1
+          ? `Run ${runs[0].run_id} started for schema '${runs[0].schema_name}'. The quality panel will refresh when metrics arrive.`
+          : `Run ${body.run_id} started.`
       toast({
-        title: 'DQX validation submitted',
-        description: monitorUrl
-          ? `Run ${body.run_id} started. Monitor in Databricks for results; the quality panel will refresh when metrics arrive.`
-          : `Run ${body.run_id} started.`,
-        action: monitorUrl
+        title: failures.length
+          ? `DQX validation: ${runs.length} submitted, ${failures.length} failed`
+          : 'DQX validation submitted',
+        description,
+        variant: failures.length && !runs.length ? 'destructive' : 'default',
+        action: firstMonitorUrl
           ? (
               <a
-                href={monitorUrl}
+                href={firstMonitorUrl}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-sm underline"
