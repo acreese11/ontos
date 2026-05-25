@@ -285,7 +285,22 @@ def main() -> None:
             os.unlink(contract_yaml_path)
         except OSError:
             pass
-    print(f"  generated {len(rules)} rules")
+
+    # DQGenerator emits rules for EVERY schema in the contract, but this job
+    # validates one schema at a time (selected by --schema_index). Without
+    # filtering, rules tagged for sibling schemas fire on this table — their
+    # required columns aren't here, so schema_validation flags every row and
+    # the predefined-rule warnings drown the run. Keep only rules whose
+    # user_metadata.schema matches the target schema name. Rules with no
+    # schema tag (e.g. dataset-wide quality rules) are retained.
+    target_schema_name = schema.get("name")
+    total = len(rules)
+    rules = [
+        r for r in rules
+        if (r.get("user_metadata", {}).get("schema") in (None, target_schema_name))
+    ]
+    skipped = total - len(rules)
+    print(f"  generated {total} rules; {skipped} for sibling schemas filtered out, {len(rules)} apply")
     if not rules:
         print(f"  no rules to apply; exiting cleanly")
         return
