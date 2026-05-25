@@ -281,6 +281,44 @@ Once the app is up, click on the app's URL to open it.
 
 ![](images/setup/360b95c5db50b21c39afbbfd7f3504d8.png)
 
+## Step #4.5 - Bootstrap the App Service Principal
+
+The app launches with the workspace identities that explicitly read the app
+URL (interactive users via OBO), but background jobs Ontos schedules —
+contract validation, DQX quality checks, compliance scans — call back into
+the Ontos API as the app's own service principal. That SP is auto-created by
+`databricks bundle deploy` (or the Apps UI), but several permissions it
+needs are *not* set automatically:
+
+- `CAN_USE` on the app itself, so M2M calls get past the Apps proxy.
+- Membership in whatever workspace group maps to an Ontos role (defaults to
+  `admins` via `APP_ADMIN_DEFAULT_GROUPS` in `src/app.yaml`).
+- An OAuth client secret minted for the SP and stored in a Databricks
+  secret scope so jobs can authenticate as the SP at runtime.
+- Unity Catalog grants on the catalog the app reads and writes (workflows
+  read source tables and write quarantine / silver / gold outputs).
+- Lakebase schema grants are usually unnecessary on a fresh deploy (the app
+  creates the schema itself as the SP), but the bootstrap script applies
+  them defensively in case the SP doesn't already own the schema.
+
+Run the one-shot bootstrap script after the first bundle/Apps-UI deploy:
+
+```sh
+PROFILE=<your-cli-profile> \
+APP_NAME=<your-app-name>   \
+CATALOG=<uc-catalog-name>  \
+INSTANCE=<lakebase-instance-name> \
+SCHEMA=app_ontos           \
+ADMIN_GROUP=admins         \
+SECRET_SCOPE=ontos-app     \
+scripts/bootstrap-app-permissions.sh
+```
+
+The script is idempotent — re-run it any time the SP loses access (e.g.
+after a Lakebase resource unbind cascade; see the troubleshooting section
+"Service Principal Lost Schema Access After Apps Update") or when you
+rotate the SP's OAuth client secret.
+
 ## Step #5: (Optionally) Load Demo Data
 
 Ontos ships with five **standalone demo packs** — one per industry — and the
