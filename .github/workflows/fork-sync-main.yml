@@ -1,0 +1,69 @@
+name: Sync fork main with upstream
+
+on:
+  schedule:
+    # Daily at 06:00 UTC. Disable the week of DAIS to avoid surprise merges.
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fork main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Fetch upstream
+        run: |
+          git remote add upstream https://github.com/databrickslabs/ontos.git
+          git fetch upstream main
+
+      - name: Fast-forward only
+        id: ff
+        run: |
+          set -e
+          # Refuse to merge if the fork main has diverged.
+          if ! git merge-base --is-ancestor HEAD upstream/main; then
+            echo "::error::Fork main has diverged from upstream/main. Manual reconciliation required."
+            echo "diverged=true" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          git merge --ff-only upstream/main
+          git push origin main
+
+      - name: Notify on divergence
+        if: failure() && steps.ff.outputs.diverged == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = "Fork main diverged from upstream — manual sync needed";
+            const body = "Auto-sync workflow could not fast-forward `acreese11/main` from `databrickslabs/main`. " +
+              "Local commits exist on `main` that aren't upstream. Resolve manually (likely: rebase or reset). " +
+              "Run: `gh workflow run fork-sync-main.yml` to retry once resolved.";
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: "fork-sync-divergence",
+            });
+            if (issues.data.length === 0) {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body,
+                labels: ["fork-sync-divergence"],
+              });
+            }

@@ -53,3 +53,7 @@ licenses.json
 licenses.csv
 
 .cursor/plans/
+
+# Claude Code user-local settings (.claude/agents/ and .claude/commands/ stay tracked)
+.claude/settings.json
+.claude/settings.local.json

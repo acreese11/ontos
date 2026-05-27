@@ -1,0 +1,56 @@
+name: Claude PR review (dais)
+
+on:
+  pull_request:
+    branches: [dais]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+  id-token: write
+
+jobs:
+  review:
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Claude review
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # Critical-review prompt; biased toward signal over nits.
+          prompt: |
+            You are reviewing a PR into the `dais` branch of the ontos fork
+            (DAIS 2026 "Safe Skies" demo build on top of databrickslabs/ontos).
+
+            Leave inline review comments on specific lines. Be terse and high-signal.
+            Focus on:
+              - Correctness bugs, especially in DAIS demo paths
+                (aviation seed, contracts, data products, ask-ontos tools, DQX wiring)
+              - Security issues (auth, secrets in YAML, SQL injection, broken access checks)
+              - Maintainability concerns that would bite a senior reviewer
+              - Inconsistencies with surrounding code patterns
+                (FastAPI route -> Manager -> Repository -> DB model layering;
+                Pydantic API models vs SQLAlchemy DB models;
+                feature gating via PermissionChecker;
+                searchable assets via @searchable_asset)
+              - Alembic migration safety (single-head invariant, idempotency)
+              - Things that would diverge unhelpfully from databrickslabs/ontos
+                upstream (so future merges stay clean)
+
+            Skip:
+              - Style nits, formatting, naming taste
+              - Comments suggesting we "could also" add features beyond PR scope
+              - Documentation improvements unless docs are actively wrong
+
+            Output a brief summary comment at the top of the PR with
+            "Critical findings: N" and "Suggestions: M" counts, then
+            inline comments on the specific lines.
+          use_sticky_comment: true
