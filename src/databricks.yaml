@@ -124,3 +124,13 @@ targets:
       volume_name: "app_files"
       lakebase_instance_name: "ontosdb"
       serving_endpoint_name: "databricks-claude-opus-4-7"
+  free-edition:
+    workspace:
+      host: https://dbc-1c96f9a2-7da9.cloud.databricks.com
+    variables:
+      sql_warehouse_id: "920a202f0664e308"
+      catalog_name: "workspace"
+      schema_name: "ontos"
+      volume_name: "ontos_files"
+      lakebase_instance_name: "ontos-fe"
+      serving_endpoint_name: "databricks-meta-llama-3-3-70b-instruct"
