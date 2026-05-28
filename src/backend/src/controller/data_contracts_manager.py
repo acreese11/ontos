@@ -1196,7 +1196,13 @@ class DataContractsManager(DeliveryMixin, SearchableAsset):
                                     if check.engine:
                                         quality_dict['engine'] = check.engine
                                     if check.implementation:
-                                        quality_dict['implementation'] = check.implementation
+                                        impl_val = check.implementation
+                                        if isinstance(impl_val, str):
+                                            try:
+                                                impl_val = json.loads(impl_val)
+                                            except (json.JSONDecodeError, TypeError):
+                                                pass  # legacy non-JSON string, pass through
+                                        quality_dict['implementation'] = impl_val
 
                                     # Add comparison fields
                                     for field in ['must_be', 'must_not_be', 'must_be_gt', 'must_be_ge',
@@ -1294,7 +1300,13 @@ class DataContractsManager(DeliveryMixin, SearchableAsset):
                         if check.engine:
                             quality_dict['engine'] = check.engine
                         if check.implementation:
-                            quality_dict['implementation'] = check.implementation
+                            impl_val = check.implementation
+                            if isinstance(impl_val, str):
+                                try:
+                                    impl_val = json.loads(impl_val)
+                                except (json.JSONDecodeError, TypeError):
+                                    pass  # legacy non-JSON string, pass through
+                            quality_dict['implementation'] = impl_val
 
                         # Add comparison fields
                         for field in ['must_be', 'must_not_be', 'must_be_gt', 'must_be_ge',
@@ -1881,9 +1893,14 @@ class DataContractsManager(DeliveryMixin, SearchableAsset):
         # Persist schema-level quality rules after the schema objects exist.
         # DQX 0.14+ reads rules from each schema's quality list (not the
         # contract-level qualityRules), so these need a real object_id FK.
+        # `implementation` is a Text column on the DB but ODCS shape is a dict
+        # (DQX needs check/arguments/name/criticality) — JSON-encode for storage.
         for schema_obj_id, quality_rules in schema_quality_work:
             for rule_data in quality_rules:
                 rule_dict = rule_data.model_dump() if hasattr(rule_data, 'model_dump') else rule_data
+                impl = rule_dict.get('implementation')
+                if isinstance(impl, dict):
+                    impl = json.dumps(impl)
                 db.add(DataQualityCheckDb(
                     object_id=schema_obj_id,
                     stable_id=rule_dict.get('id'),
@@ -1902,7 +1919,7 @@ class DataContractsManager(DeliveryMixin, SearchableAsset):
                     rule=rule_dict.get('rule'),
                     query=rule_dict.get('query'),
                     engine=rule_dict.get('engine'),
-                    implementation=rule_dict.get('implementation'),
+                    implementation=impl,
                     must_be=rule_dict.get('mustBe') or rule_dict.get('must_be'),
                     must_not_be=rule_dict.get('mustNotBe') or rule_dict.get('must_not_be'),
                     must_be_gt=rule_dict.get('mustBeGt') or rule_dict.get('must_be_gt'),
