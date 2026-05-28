@@ -36,7 +36,7 @@ from .aggregates import (
 )
 from .aircraft import build_aircraft_registry
 from .airlines import build_airlines
-from .airports import build_airports
+from .airports import load_airports
 from .events import (
     build_flight_status_raw,
     build_flight_status_silver,
@@ -60,7 +60,7 @@ from .uc_writer import WriteResult, ensure_seed_dirs, write_table
 def generate_all_dataframes(seed: int = DEFAULT_SEED):
     """Build every dataframe in memory. Returns a dict of (schema, table) → DataFrame."""
     print("Building Reference Master…")
-    airports = build_airports(n_airports=250)
+    airports = load_airports()
     airlines = build_airlines()
     aircraft = build_aircraft_registry(airlines, n_aircraft=250, seed=seed)
     print(f"  airports {airports.shape}, airlines {airlines.shape}, aircraft {aircraft.shape}")

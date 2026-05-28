@@ -1,21 +1,27 @@
 """Aviation Reference Master / `airports` — curated subset of the OurAirports CC-0 dataset.
 
-We pull the public CSV, filter to large+medium passenger airports with both IATA
-and ICAO codes, and trim to columns useful for the demo.
+The DAIS demo loads from a committed Parquet snapshot
+(`snapshots/airports.parquet`, ~14KB, 250 rows) — no network call needed.
+
+`fetch_ourairports_csv` / `build_airports` remain available for refreshing the
+snapshot. Run `python -m src.data.aviation.airports --refresh` from the backend
+dir to regenerate.
 """
 from __future__ import annotations
 
 import io
 import urllib.request
+from pathlib import Path
 from typing import Optional
 
 import polars as pl
 
 OURAIRPORTS_URL = "https://davidmegginson.github.io/ourairports-data/airports.csv"
+SNAPSHOT_PATH = Path(__file__).parent / "snapshots" / "airports.parquet"
 
 
 def fetch_ourairports_csv(url: str = OURAIRPORTS_URL) -> bytes:
-    """Fetch the OurAirports CSV. Network call; cache the result if you call this often."""
+    """Fetch the OurAirports CSV. Network call; only used to refresh the committed snapshot."""
     with urllib.request.urlopen(url, timeout=30) as resp:
         return resp.read()
 
@@ -24,15 +30,14 @@ def build_airports(
     csv_bytes: Optional[bytes] = None,
     n_airports: int = 250,
 ) -> pl.DataFrame:
-    """Build the silver `airports` reference table.
+    """Build the silver `airports` reference table from raw OurAirports CSV.
+
+    Used to refresh the committed snapshot. Demo / runtime callers should use
+    `load_airports()` instead — it reads the snapshot and avoids the network.
 
     Args:
-        csv_bytes: pre-fetched OurAirports CSV bytes (skip the network call). If
-            None, fetches from the public URL.
-        n_airports: how many airports to keep (we sort by size class then take top N).
-
-    Returns a Polars DataFrame with columns:
-        icao, iata, name, city, country_iso, lat, lon, elevation_ft, size_class
+        csv_bytes: pre-fetched OurAirports CSV bytes. If None, fetches from URL.
+        n_airports: how many airports to keep (sorted by size class, then name).
     """
     if csv_bytes is None:
         csv_bytes = fetch_ourairports_csv()
@@ -72,3 +77,31 @@ def build_airports(
         .otherwise(pl.lit("medium"))
         .alias("size_class"),
     )
+
+
+def load_airports(snapshot_path: Path = SNAPSHOT_PATH) -> pl.DataFrame:
+    """Load the committed airports snapshot. No network call. Used by the demo seeder."""
+    if not snapshot_path.exists():
+        raise FileNotFoundError(
+            f"Airports snapshot missing at {snapshot_path}. "
+            f"Run `python -m src.data.aviation.airports --refresh` to rebuild."
+        )
+    return pl.read_parquet(snapshot_path)
+
+
+def _refresh_snapshot(n_airports: int = 250) -> None:
+    """Rebuild the snapshot from the live OurAirports CSV. Run this only when
+    you intentionally want to update the committed reference data."""
+    df = build_airports(n_airports=n_airports)
+    SNAPSHOT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    df.write_parquet(SNAPSHOT_PATH)
+    print(f"refreshed {SNAPSHOT_PATH} — {len(df)} rows, {SNAPSHOT_PATH.stat().st_size} bytes")
+
+
+if __name__ == "__main__":
+    import sys
+
+    if "--refresh" in sys.argv:
+        _refresh_snapshot()
+    else:
+        print(load_airports())
