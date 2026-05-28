@@ -1945,8 +1945,14 @@ async def get_odcs_json(
 # from the UI (or the agent) without standing up a pipeline of their own.
 # ──────────────────────────────────────────────────────────────────────────────
 class DqxRunBody(BaseModel):
-    """Optional body for /dqx/run. All fields have safe defaults."""
-    ontos_base_url: Optional[str] = None
+    """Optional body for /dqx/run. All fields have safe defaults.
+
+    NOTE: `ontos_base_url` was removed (was a body-supplied callback URL).
+    Server derives it from `X-Forwarded-Host` / `X-Forwarded-Proto` or the
+    request URL — never from the request body — to close an SSRF vector
+    where a body-supplied attacker host received the app SP's OAuth bearer
+    via job logs.
+    """
     pipeline_id: str = "dqx_contract_validation"
     # When None (default), one run is submitted per schema in the contract.
     # When an int, only that schema is validated — used for targeted re-runs
@@ -1980,26 +1986,19 @@ async def run_dqx_validation(
     body = body or DqxRunBody()
 
     # Resolve the callback URL the DQX job will use to reach this app.
-    # Derivation order:
-    #   1. Explicit override from the request body (useful for local dev with
-    #      a tunneled URL, or when posting from a script).
-    #   2. X-Forwarded-Host / X-Forwarded-Proto set by the Databricks Apps
-    #      proxy — the canonical source for "what URL did the user hit?".
-    #   3. The request URL itself (request.url.netloc) — covers localhost
-    #      and any case where the proxy headers aren't present.
-    # This avoids the previous ONTOS_PUBLIC_URL env var, which forced a
-    # config change per deploy target.
+    # Trust order: proxy-supplied X-Forwarded-* headers (canonical when behind
+    # the Databricks Apps proxy) → request URL (covers localhost). The request
+    # body MUST NOT supply this — a body-supplied host was an SSRF vector that
+    # received the app SP's OAuth bearer via job logs. See DqxRunBody docstring.
+    # This also replaced the older ONTOS_PUBLIC_URL env var (per-target config).
     settings = request.app.state.settings
-    if body.ontos_base_url:
-        ontos_base_url = body.ontos_base_url
+    fwd_host = request.headers.get("x-forwarded-host")
+    fwd_proto = request.headers.get("x-forwarded-proto")
+    if fwd_host:
+        scheme = fwd_proto or request.url.scheme
+        ontos_base_url = f"{scheme}://{fwd_host}"
     else:
-        fwd_host = request.headers.get("x-forwarded-host")
-        fwd_proto = request.headers.get("x-forwarded-proto")
-        if fwd_host:
-            scheme = fwd_proto or request.url.scheme
-            ontos_base_url = f"{scheme}://{fwd_host}"
-        else:
-            ontos_base_url = f"{request.url.scheme}://{request.url.netloc}"
+        ontos_base_url = f"{request.url.scheme}://{request.url.netloc}"
 
     jobs_manager = get_jobs_manager(request)
 

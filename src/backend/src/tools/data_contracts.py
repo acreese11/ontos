@@ -553,9 +553,26 @@ class GenerateContractFromTableTool(BaseTool):
         try:
             from src.controller.contract_generator_manager import ContractGeneratorManager
 
+            # Thread the OBO workspace client + user token so UC reads, sample
+            # queries, and the LLM call all run as the user — not the app SP.
+            # Without this, a user could ask the agent to introspect a UC
+            # table they have no SELECT on and get back column metadata +
+            # sample rows via the SP's wider privileges.
+            user_token = None
+            if ctx.workspace_client is not None:
+                try:
+                    headers = ctx.workspace_client.config.authenticate() or {}
+                    auth_header = headers.get("Authorization", "")
+                    if auth_header.startswith("Bearer "):
+                        user_token = auth_header[7:]
+                except Exception:
+                    # Best-effort: if we can't pull a bearer, leave token None.
+                    # The OBO ws client is still threaded for UC operations.
+                    pass
             generator = ContractGeneratorManager(
                 settings=ctx.settings,
                 contracts_manager=ctx.data_contracts_manager,
+                workspace_client=ctx.workspace_client,
             )
             result = generator.generate_and_save(
                 db=ctx.db,
@@ -564,7 +581,7 @@ class GenerateContractFromTableTool(BaseTool):
                 table=table,
                 sample_size=min(max(int(sample_size or 20), 1), 200),
                 current_user=None,
-                user_token=None,
+                user_token=user_token,
                 force=bool(force),
             )
             # Existing-contract short-circuit: surface the existing draft and a

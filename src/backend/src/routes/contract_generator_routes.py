@@ -53,6 +53,9 @@ async def preview_contract(
             sample_size=body.sample_size,
             user_token=_user_token(x_forwarded_access_token),
         )
+    except ValueError as e:
+        # Identifier validation failure or similar bad-input from the manager.
+        raise HTTPException(status_code=422, detail=str(e))
     except RuntimeError as e:
         logger.warning(f"Contract generation failed: {e}")
         raise HTTPException(status_code=400, detail=str(e))
@@ -91,6 +94,9 @@ async def generate_and_save(
             user_token=_user_token(x_forwarded_access_token),
             force=body.force,
         )
+    except ValueError as e:
+        # Identifier validation failure or similar bad-input from the manager.
+        raise HTTPException(status_code=422, detail=str(e))
     except RuntimeError as e:
         logger.warning(f"Contract generation failed: {e}")
         raise HTTPException(status_code=400, detail=str(e))
