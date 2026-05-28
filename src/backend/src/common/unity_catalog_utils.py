@@ -59,6 +59,40 @@ def is_valid_uuid(identifier: str) -> bool:
         return False
 
 
+# PostgreSQL reserved keywords (common subset). Module-level so it isn't
+# rebuilt on every sanitize call. Full list:
+# https://www.postgresql.org/docs/current/sql-keywords-appendix.html
+_POSTGRES_RESERVED = frozenset({
+    'all', 'analyse', 'analyze', 'and', 'any', 'array', 'as', 'asc',
+    'asymmetric', 'both', 'case', 'cast', 'check', 'collate', 'column',
+    'constraint', 'create', 'current_catalog', 'current_date',
+    'current_role', 'current_time', 'current_timestamp', 'current_user',
+    'default', 'deferrable', 'desc', 'distinct', 'do', 'else', 'end',
+    'except', 'false', 'fetch', 'for', 'foreign', 'from', 'grant',
+    'group', 'having', 'in', 'initially', 'intersect', 'into', 'lateral',
+    'leading', 'limit', 'localtime', 'localtimestamp', 'not', 'null',
+    'offset', 'on', 'only', 'or', 'order', 'placing', 'primary',
+    'references', 'returning', 'select', 'session_user', 'some',
+    'symmetric', 'table', 'then', 'to', 'trailing', 'true', 'union',
+    'unique', 'user', 'using', 'variadic', 'when', 'where', 'window', 'with'
+})
+
+# Strict PostgreSQL identifier shape (letter/underscore start, then
+# alphanumerics/underscore/dollar). This is the shape that is safe to
+# interpolate UNQUOTED into a libpq options string or DDL. Narrower than the
+# principal-name shape that sanitize_postgres_identifier also accepts.
+_STRICT_PG_IDENT_RE = re.compile(r'^[a-zA-Z_][a-zA-Z0-9_$]*$')
+
+
+def is_strict_pg_identifier(identifier: str) -> bool:
+    """True if `identifier` is safe to interpolate UNQUOTED (libpq options, etc.).
+
+    Single source of truth for the strict shape so the sanitizer and the
+    database.py search_path call site don't drift on separate inline regexes.
+    """
+    return bool(identifier) and bool(_STRICT_PG_IDENT_RE.match(identifier))
+
+
 def sanitize_uc_identifier(identifier: str, max_length: int = 255) -> str:
     """Sanitize and validate a Unity Catalog identifier.
     
@@ -151,44 +185,32 @@ def sanitize_postgres_identifier(identifier: str, max_length: int = 63) -> str:
     if is_valid_uuid(identifier):
         return identifier
 
-    # Databricks principal names (user emails like 'first.last@company.com' and SP names
-    # like 'app-xxxxxx ontos') are valid Lakebase PG role names but contain '@', '.', '-',
-    # and spaces that PG identifiers normally disallow. They are always wrapped in
-    # double-quotes when used in DDL, and the SDK is the source of truth (not user input),
-    # so we accept them after verifying no quote/backslash injection chars are present.
-    if re.match(r'^[a-zA-Z0-9_.@\- ]+$', identifier):
-        return identifier
-
-    # PostgreSQL allows letters, digits, underscores, and dollar signs
-    # Must start with letter or underscore
-    if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_$]*$', identifier):
+    # Recognize either:
+    #   (a) the strict PG identifier shape (is_strict_pg_identifier), OR
+    #   (b) the extended principal-name shape used for Databricks user emails
+    #       ('first.last@company.com') and SP display names ('app-xxx ontos').
+    # Both must start with a letter or underscore — '123@example.com' is
+    # rejected even though it's plausibly a Databricks principal, because
+    # callers that ever interpolate without quoting would break.
+    matches_principal = bool(re.match(r'^[a-zA-Z_][a-zA-Z0-9_.@ -]*$', identifier))
+    if not (is_strict_pg_identifier(identifier) or matches_principal):
         raise ValueError(
             f"Invalid PostgreSQL identifier '{identifier}': must start with letter or underscore "
-            "and contain only letters, digits, underscores, and dollar signs"
+            "and contain only letters, digits, underscores, dollar signs, or the "
+            "principal-name chars '.@- '"
         )
-    
-    # Check against PostgreSQL reserved keywords (most common ones)
-    # Full list: https://www.postgresql.org/docs/current/sql-keywords-appendix.html
-    POSTGRES_RESERVED = {
-        'all', 'analyse', 'analyze', 'and', 'any', 'array', 'as', 'asc',
-        'asymmetric', 'both', 'case', 'cast', 'check', 'collate', 'column',
-        'constraint', 'create', 'current_catalog', 'current_date',
-        'current_role', 'current_time', 'current_timestamp', 'current_user',
-        'default', 'deferrable', 'desc', 'distinct', 'do', 'else', 'end',
-        'except', 'false', 'fetch', 'for', 'foreign', 'from', 'grant',
-        'group', 'having', 'in', 'initially', 'intersect', 'into', 'lateral',
-        'leading', 'limit', 'localtime', 'localtimestamp', 'not', 'null',
-        'offset', 'on', 'only', 'or', 'order', 'placing', 'primary',
-        'references', 'returning', 'select', 'session_user', 'some',
-        'symmetric', 'table', 'then', 'to', 'trailing', 'true', 'union',
-        'unique', 'user', 'using', 'variadic', 'when', 'where', 'window', 'with'
-    }
-    
-    if identifier.lower() in POSTGRES_RESERVED:
+
+    # Reject reserved keywords on BOTH paths. The principal-name fast-path used
+    # to skip this entirely, letting `select@example.com` through. For a
+    # principal name the local part 'select' is what matters: an unquoted
+    # interpolation `SET ROLE select@example.com` would parse as `SET ROLE
+    # select` with a SQL-syntax-error tail. Defense-in-depth.
+    head = identifier.split('@', 1)[0].lower()
+    if identifier.lower() in _POSTGRES_RESERVED or head in _POSTGRES_RESERVED:
         raise ValueError(
             f"Invalid PostgreSQL identifier '{identifier}': cannot use reserved keyword"
         )
-    
+
     return identifier
 
 

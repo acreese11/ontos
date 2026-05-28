@@ -105,9 +105,58 @@ class TestUnityCatalogUtils:
             sanitize_postgres_identifier("9database")
 
     def test_sanitize_postgres_identifier_invalid_chars(self):
-        """Test rejecting identifier with invalid characters."""
+        """Test rejecting identifier with characters outside both the strict
+        PG and the extended principal-name shapes (quotes, backslashes, etc.)."""
+        # These never match either accepted shape — the sanitizer has no
+        # quoting story for them.
         with pytest.raises(ValueError, match="must start with letter or underscore"):
-            sanitize_postgres_identifier("my-database")
+            sanitize_postgres_identifier('my"database')
+        with pytest.raises(ValueError, match="must start with letter or underscore"):
+            sanitize_postgres_identifier("my\\database")
+        with pytest.raises(ValueError, match="must start with letter or underscore"):
+            sanitize_postgres_identifier("my;database")
+
+    def test_sanitize_postgres_identifier_databricks_principal_names(self):
+        """Databricks user emails and SP display names are accepted as-is —
+        callers double-quote them when interpolating into DDL."""
+        assert sanitize_postgres_identifier("alan.reese@databricks.com") == "alan.reese@databricks.com"
+        assert sanitize_postgres_identifier("app-xxxxxx ontos") == "app-xxxxxx ontos"
+        # Hyphenated names are now accepted (the principal-name shape allows
+        # '-' for SP display names). This is an INTENTIONAL behavior change from
+        # the old strict-only sanitizer, which rejected "my-database". Documented
+        # here so the relaxation is a deliberate, tested decision — not a regression.
+        assert sanitize_postgres_identifier("my-database") == "my-database"
+
+    def test_is_strict_pg_identifier(self):
+        """The shared strict-shape helper used by the libpq search_path call
+        site — must reject anything the principal-name path additionally allows."""
+        from src.common.unity_catalog_utils import is_strict_pg_identifier
+        assert is_strict_pg_identifier("app_ontos") is True
+        assert is_strict_pg_identifier("_x") is True
+        assert is_strict_pg_identifier("my-schema") is False   # hyphen
+        assert is_strict_pg_identifier("a.b") is False          # dot
+        assert is_strict_pg_identifier("a b") is False          # space
+        assert is_strict_pg_identifier("u@h") is False          # at
+        assert is_strict_pg_identifier("") is False
+
+    def test_sanitize_postgres_identifier_reserved_keyword_in_principal_name(self):
+        """A principal name whose local part is a reserved keyword
+        (e.g. 'select@example.com') must still be rejected — an unquoted
+        interpolation like `SET ROLE select@example.com` would parse as
+        `SET ROLE select` with a syntax-error tail."""
+        with pytest.raises(ValueError, match="reserved keyword"):
+            sanitize_postgres_identifier("select@example.com")
+        with pytest.raises(ValueError, match="reserved keyword"):
+            sanitize_postgres_identifier("user@example.com")
+
+    def test_sanitize_postgres_identifier_digit_leading_rejected(self):
+        """Digit-leading shapes are rejected on BOTH paths — even though
+        '123@example.com' looks principal-name-shaped, an unquoted use
+        would not parse as an identifier."""
+        with pytest.raises(ValueError, match="must start with letter or underscore"):
+            sanitize_postgres_identifier("123@example.com")
+        with pytest.raises(ValueError, match="must start with letter or underscore"):
+            sanitize_postgres_identifier("9database")
 
     # map_logical_type_to_column_type tests
     def test_map_logical_type_integer(self):
