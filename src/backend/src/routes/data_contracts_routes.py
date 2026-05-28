@@ -1945,8 +1945,14 @@ async def get_odcs_json(
 # from the UI (or the agent) without standing up a pipeline of their own.
 # ──────────────────────────────────────────────────────────────────────────────
 class DqxRunBody(BaseModel):
-    """Optional body for /dqx/run. All fields have safe defaults."""
-    ontos_base_url: Optional[str] = None
+    """Optional body for /dqx/run. All fields have safe defaults.
+
+    NOTE: `ontos_base_url` was removed (was a body-supplied callback URL).
+    Server derives it from `X-Forwarded-Host` / `X-Forwarded-Proto` or the
+    request URL — never from the request body — to close an SSRF vector
+    where a body-supplied attacker host received the app SP's OAuth bearer
+    via job logs.
+    """
     pipeline_id: str = "dqx_contract_validation"
     # When None (default), one run is submitted per schema in the contract.
     # When an int, only that schema is validated — used for targeted re-runs
@@ -1990,16 +1996,16 @@ async def run_dqx_validation(
     # This avoids the previous ONTOS_PUBLIC_URL env var, which forced a
     # config change per deploy target.
     settings = request.app.state.settings
-    if body.ontos_base_url:
-        ontos_base_url = body.ontos_base_url
+    # Trust order: proxy-supplied X-Forwarded-* headers (canonical when behind
+    # the Databricks Apps proxy) → request URL (covers localhost). The body
+    # MUST NOT supply this — see DqxRunBody docstring for the SSRF rationale.
+    fwd_host = request.headers.get("x-forwarded-host")
+    fwd_proto = request.headers.get("x-forwarded-proto")
+    if fwd_host:
+        scheme = fwd_proto or request.url.scheme
+        ontos_base_url = f"{scheme}://{fwd_host}"
     else:
-        fwd_host = request.headers.get("x-forwarded-host")
-        fwd_proto = request.headers.get("x-forwarded-proto")
-        if fwd_host:
-            scheme = fwd_proto or request.url.scheme
-            ontos_base_url = f"{scheme}://{fwd_host}"
-        else:
-            ontos_base_url = f"{request.url.scheme}://{request.url.netloc}"
+        ontos_base_url = f"{request.url.scheme}://{request.url.netloc}"
 
     jobs_manager = get_jobs_manager(request)
 
