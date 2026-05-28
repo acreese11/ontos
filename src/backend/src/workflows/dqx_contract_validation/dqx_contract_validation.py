@@ -294,13 +294,23 @@ def main() -> None:
     # user_metadata.schema matches the target schema name. Rules with no
     # schema tag (e.g. dataset-wide quality rules) are retained.
     target_schema_name = schema.get("name")
+    if not target_schema_name:
+        raise SystemExit(
+            f"Schema at index {args.schema_index} has no 'name' field; cannot filter rules. "
+            f"Aborting before running every contract rule against this single table."
+        )
     total = len(rules)
     rules = [
         r for r in rules
         if (r.get("user_metadata", {}).get("schema") in (None, target_schema_name))
     ]
     skipped = total - len(rules)
-    print(f"  generated {total} rules; {skipped} for sibling schemas filtered out, {len(rules)} apply")
+    explicit = sum(1 for r in rules if r.get("user_metadata", {}).get("rule_type") == "explicit")
+    print(
+        f"  generated {total} rules for schema={target_schema_name!r}; "
+        f"{skipped} sibling-schema rules filtered out, {len(rules)} apply "
+        f"({explicit} from the contract's custom quality rules)"
+    )
     if not rules:
         print(f"  no rules to apply; exiting cleanly")
         return

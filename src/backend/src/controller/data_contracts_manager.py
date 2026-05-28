@@ -1745,6 +1745,9 @@ class DataContractsManager(DeliveryMixin, SearchableAsset):
         # Collect semantic link work to process after bulk insert
         schema_semantic_work = []
         prop_semantic_work = []
+        # Per-schema quality rules (DQX-compatible) attach to the schema, not the contract.
+        # See fix #1 in plans/dais-critical-review.md.
+        schema_quality_work: list[tuple[str, list]] = []
 
         for schema_obj_data in schema_data:
             if hasattr(schema_obj_data, 'model_dump'):
@@ -1772,6 +1775,11 @@ class DataContractsManager(DeliveryMixin, SearchableAsset):
             schema_auth_defs = schema_dict.get('authoritativeDefinitions', [])
             if schema_auth_defs and current_user:
                 schema_semantic_work.append((contract_id, schema_dict.get('name', 'table'), schema_auth_defs))
+
+            # Collect schema-level quality rules so they persist with the right object_id
+            schema_quality = schema_dict.get('quality') or []
+            if schema_quality:
+                schema_quality_work.append((schema_obj_id, schema_quality))
 
             properties = schema_dict.get('properties', [])
 
@@ -1869,6 +1877,41 @@ class DataContractsManager(DeliveryMixin, SearchableAsset):
         if all_prop_relationships:
             db.add_all(all_prop_relationships)
         db.flush()
+
+        # Persist schema-level quality rules after the schema objects exist.
+        # DQX 0.14+ reads rules from each schema's quality list (not the
+        # contract-level qualityRules), so these need a real object_id FK.
+        for schema_obj_id, quality_rules in schema_quality_work:
+            for rule_data in quality_rules:
+                rule_dict = rule_data.model_dump() if hasattr(rule_data, 'model_dump') else rule_data
+                db.add(DataQualityCheckDb(
+                    object_id=schema_obj_id,
+                    stable_id=rule_dict.get('id'),
+                    level=rule_dict.get('level', 'object'),
+                    name=rule_dict.get('name'),
+                    description=rule_dict.get('description'),
+                    dimension=rule_dict.get('dimension'),
+                    business_impact=rule_dict.get('businessImpact') or rule_dict.get('business_impact'),
+                    method=rule_dict.get('method'),
+                    schedule=rule_dict.get('schedule'),
+                    scheduler=rule_dict.get('scheduler'),
+                    severity=rule_dict.get('severity'),
+                    type=rule_dict.get('type', 'library'),
+                    unit=rule_dict.get('unit'),
+                    tags=rule_dict.get('tags'),
+                    rule=rule_dict.get('rule'),
+                    query=rule_dict.get('query'),
+                    engine=rule_dict.get('engine'),
+                    implementation=rule_dict.get('implementation'),
+                    must_be=rule_dict.get('mustBe') or rule_dict.get('must_be'),
+                    must_not_be=rule_dict.get('mustNotBe') or rule_dict.get('must_not_be'),
+                    must_be_gt=rule_dict.get('mustBeGt') or rule_dict.get('must_be_gt'),
+                    must_be_ge=rule_dict.get('mustBeGe') or rule_dict.get('must_be_ge'),
+                    must_be_lt=rule_dict.get('mustBeLt') or rule_dict.get('must_be_lt'),
+                    must_be_le=rule_dict.get('mustBeLe') or rule_dict.get('must_be_le'),
+                    must_be_between_min=rule_dict.get('mustBeBetweenMin') or rule_dict.get('must_be_between_min'),
+                    must_be_between_max=rule_dict.get('mustBeBetweenMax') or rule_dict.get('must_be_between_max'),
+                ))
 
         # Process semantic links after bulk insert
         if schema_semantic_work or prop_semantic_work:

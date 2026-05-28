@@ -140,11 +140,17 @@ def _schema_entry(
     description: str = None,
     business_name: str = None,
     tags: list[str] = None,
+    quality: list = None,
 ) -> dict:
     """One physical-table schema entry inside a contract's schemas list.
 
     Use multiple of these inside a single contract when several tables share a
     trust boundary (same release cadence, same SLA, same owning team).
+
+    Per-schema `quality` rules are required for DQX 0.14+ — the rules generator
+    only iterates `odcs.schema_[*].quality`, never the contract-level
+    `qualityRules` field. Single-schema contracts can pass `quality` to
+    `_contract()` and it will auto-route here.
     """
     return {
         "name": name,
@@ -154,6 +160,7 @@ def _schema_entry(
         "businessName": business_name or name.replace("_", " ").title(),
         "tags": tags or [],
         "properties": properties,
+        "quality": quality or [],
     }
 
 
@@ -199,7 +206,21 @@ def _contract(
             properties=schema_props,
             business_name=name.replace("_", " ").title(),
             tags=tags,
+            quality=quality,  # single-schema: top-level quality routes to the sole schema
         )]
+        # quality is now owned by the schema; null out the top-level copy so DQX
+        # has a single source of truth and the contract-level `qualityRules`
+        # block stays empty for single-schema contracts.
+        quality = []
+    elif quality:
+        # Multi-schema contracts must put rules inline in each _schema_entry(quality=[...]).
+        # A non-empty top-level `quality` here would be silently ignored by DQX —
+        # surface that loudly instead.
+        raise ValueError(
+            f"Contract '{name}' is multi-schema; pass quality=[...] inside each "
+            f"_schema_entry() instead of at the contract level. "
+            f"DQX 0.14 only reads per-schema quality lists."
+        )
 
     # Derive server connectivity from the first schema (all schemas in a contract
     # are assumed to live in the same catalog.schema).
@@ -339,11 +360,16 @@ def _prop(
 # ──────────────────────────────────────────────────────────────
 # Quality rule helper (ODCS-shaped, DQX-compatible)
 # ──────────────────────────────────────────────────────────────
+_DQX_CRITICALITY = {"error": "error", "warning": "warn"}
+
+
 def _qrule(
     name: str,
     description: str,
     *,
     rule: str,
+    sql_expr: str = None,
+    runnable: bool = True,
     severity: str = "error",
     dimension: str = "validity",
     business_impact: str = "operational",
@@ -360,15 +386,26 @@ def _qrule(
     schedule: str = "every-5m",
     unit: str = "rows",
 ):
-    """Build a richly-described ODCS quality rule dict."""
+    """Build a richly-described ODCS quality rule dict.
+
+    When `runnable=True` (default) and `type_=='library'`, the rule is emitted in
+    DQX 0.14+ explicit-rule shape (type='custom', engine='dqx', implementation
+    with a sql_expression check) so the DQX rules generator picks it up. The
+    `sql_expr` arg overrides the human-readable `rule` text — use it when the
+    `rule` description isn't valid Spark SQL (e.g., uses 'matches' or 'is
+    unique').
+
+    When `runnable=False`, the rule is documentation-only — its semantics are
+    captured in `rule` (often natural language) but DQX won't try to evaluate
+    it. Use this for cross-table joins, sequence checks, and uniqueness
+    assertions that need a different DQX check type.
+    """
     q = {
         "name": name,
         "description": description,
         "dimension": dimension,
         "businessImpact": business_impact,
         "severity": severity,
-        "type": type_,
-        "engine": engine,
         "method": method,
         "schedule": schedule,
         "scheduler": "databricks-jobs",
@@ -376,6 +413,27 @@ def _qrule(
         "rule": rule,
         "level": "object",
     }
+    if runnable and type_ == "library":
+        # Emit DQX-compatible shape so DataContractRulesGenerator picks this up
+        # from schema.quality[]. Expression defaults to `rule` when the rule
+        # text is already valid Spark SQL.
+        q["type"] = "custom"
+        q["engine"] = "dqx"
+        q["implementation"] = {
+            "check": {
+                "function": "sql_expression",
+                "arguments": {
+                    "expression": sql_expr or rule,
+                    "msg": description,
+                },
+            },
+            "name": name,
+            "criticality": _DQX_CRITICALITY.get(severity, "error"),
+        }
+    else:
+        # Documentation-only — DQX ignores anything not type='custom' + engine='dqx'.
+        q["type"] = type_
+        q["engine"] = engine
     if must_be is not None: q["mustBe"] = must_be
     if must_be_gt is not None: q["mustBeGt"] = must_be_gt
     if must_be_ge is not None: q["mustBeGe"] = must_be_ge
@@ -411,12 +469,12 @@ LIVE_FLIGHTS_CONTRACT = _contract(
         _prop("last_contact_utc", "date", description="Most recent any-update timestamp; gap from ts_utc indicates stale position.", classification="Internal", business_name="Last Contact (UTC)"),
     ],
     quality=[
-        _qrule("icao24_format", "icao24 must be a 6-character uppercase hex transponder address", rule="icao24 matches '^[0-9A-F]{6}$'", dimension="validity", business_impact="critical"),
+        _qrule("icao24_format", "icao24 must be a 6-character uppercase hex transponder address", rule="icao24 matches '^[0-9A-F]{6}$'", sql_expr="icao24 rlike '^[0-9A-F]{6}$'", dimension="validity", business_impact="critical"),
         _qrule("alt_baro_positive", "Barometric altitude cannot be negative (physically impossible)", rule="alt_baro_ft >= 0", dimension="validity", business_impact="critical", must_be_ge=0),
         _qrule("lat_in_range", "Latitude must be within WGS-84 valid range", rule="lat between -90 and 90", dimension="validity", must_be_between_min=-90, must_be_between_max=90),
         _qrule("lon_in_range", "Longitude must be within WGS-84 valid range", rule="lon between -180 and 180", dimension="validity", must_be_between_min=-180, must_be_between_max=180),
         _qrule("vert_rate_plausible", "Vertical rate beyond ±10,000 fpm is implausible for commercial aviation", rule="abs(vert_rate_fpm) <= 10000", dimension="validity", severity="warning", must_be_between_min=-10000, must_be_between_max=10000),
-        _qrule("position_freshness", "Stale ADS-B positions older than 60s indicate coverage gap", rule="now() - ts_utc <= interval 60 seconds", dimension="freshness", severity="warning", schedule="every-1m"),
+        _qrule("position_freshness", "Stale ADS-B positions older than 60s indicate coverage gap", rule="now() - ts_utc <= interval 60 seconds", sql_expr="ts_utc >= now() - interval 60 seconds", dimension="freshness", severity="warning", schedule="every-1m"),
     ],
     tags=["adsb", "telemetry", "operational", "source-aligned"],
 )
@@ -448,9 +506,9 @@ FLIGHT_SCHEDULE_CONTRACT = _contract(
         _prop("seat_capacity", "integer", min_=19, max_=900),
     ],
     quality=[
-        _qrule("airline_iata_format", "Airline IATA must be a 2-character alphanumeric code (A-Z, 0-9)", rule="airline_iata matches '^[A-Z0-9]{2}$'", dimension="validity"),
-        _qrule("dep_iata_format", "Departure airport IATA must be a 3-letter uppercase code", rule="dep_iata matches '^[A-Z]{3}$'", dimension="validity"),
-        _qrule("arr_iata_format", "Arrival airport IATA must be a 3-letter uppercase code", rule="arr_iata matches '^[A-Z]{3}$'", dimension="validity"),
+        _qrule("airline_iata_format", "Airline IATA must be a 2-character alphanumeric code (A-Z, 0-9)", rule="airline_iata matches '^[A-Z0-9]{2}$'", sql_expr="airline_iata rlike '^[A-Z0-9]{2}$'", dimension="validity"),
+        _qrule("dep_iata_format", "Departure airport IATA must be a 3-letter uppercase code", rule="dep_iata matches '^[A-Z]{3}$'", sql_expr="dep_iata rlike '^[A-Z]{3}$'", dimension="validity"),
+        _qrule("arr_iata_format", "Arrival airport IATA must be a 3-letter uppercase code", rule="arr_iata matches '^[A-Z]{3}$'", sql_expr="arr_iata rlike '^[A-Z]{3}$'", dimension="validity"),
         _qrule("arrival_after_departure", "Scheduled arrival must be after scheduled departure", rule="scheduled_arr_utc > scheduled_dep_utc", dimension="validity", business_impact="critical"),
         _qrule("distinct_endpoints", "Origin and destination airports must differ", rule="dep_iata != arr_iata", dimension="validity", business_impact="critical"),
         _qrule("flight_no_range", "Flight number must be between 1 and 9999", rule="flight_no between 1 and 9999", dimension="validity", must_be_between_min=1, must_be_between_max=9999),
@@ -489,6 +547,13 @@ FLIGHT_STATUS_CONTRACT = _contract(
                 _prop("diverted_airport_iata", "string", pattern=r"^[A-Z]{3}$"),
                 _prop("data_source", "string", enum=["SCHEDULED", "AIRPORT", "AIRLINE", "ASQP", "FS_INFERRED"]),
             ],
+            quality=[
+                _qrule("delay_minutes_range", "Departures more than 60 min early are unrealistic", rule="delay_minutes >= -60", dimension="validity", must_be_ge=-60),
+                _qrule("cancellation_has_reason", "Cancellations should always carry a reason code (per ICAO recommendation)", rule="event_type != 'CANCELLED' OR delay_reason_code is not null", dimension="completeness", severity="warning"),
+                _qrule("event_ts_not_future", "Event timestamp cannot be more than 24h in the future", rule="event_ts_utc <= now() + interval 24 hours", dimension="validity"),
+                # OOOI sequence ordering is a multi-row window check; not expressible as a single-row SQL predicate.
+                _qrule("ooooi_ordering", "OOOI events for a single flight must occur in sequence (OUT < OFF < ON < IN)", rule="rolling-window OOOI sequence check per flight_key in flight_status", dimension="consistency", severity="warning", runnable=False),
+            ],
         ),
         _schema_entry(
             name="flight_status_delays",
@@ -503,6 +568,9 @@ FLIGHT_STATUS_CONTRACT = _contract(
                 _prop("delay_minutes", "integer", required=True, min_=0),
                 _prop("delay_reason_code", "string", required=True),
                 _prop("delay_category", "string", enum=["WEATHER", "ATC", "CARRIER", "SECURITY", "LATE_AIRCRAFT", "OTHER"], description="Derived bucket per BTS categorization"),
+            ],
+            quality=[
+                _qrule("delays_only_positive", "Delays projection must only contain positive delays", rule="delay_minutes > 0", dimension="validity", business_impact="critical"),
             ],
         ),
         _schema_entry(
@@ -519,17 +587,13 @@ FLIGHT_STATUS_CONTRACT = _contract(
                 _prop("reason_code", "string", required=True),
                 _prop("diverted_airport_iata", "string", pattern=r"^[A-Z]{3}$", description="Only populated for DIVERTED rows"),
             ],
+            quality=[
+                _qrule("cancel_disposition_in_scope", "Cancellations projection must only contain CANCELLED/DIVERTED dispositions", rule="disposition in ('CANCELLED','DIVERTED')", dimension="validity", business_impact="critical"),
+                _qrule("diversion_has_airport", "Diversions must specify the diverted-to airport", rule="disposition != 'DIVERTED' OR diverted_airport_iata is not null", dimension="completeness", business_impact="critical"),
+            ],
         ),
     ],
-    quality=[
-        _qrule("delay_minutes_range", "Departures more than 60 min early are unrealistic", rule="flight_status.delay_minutes >= -60", dimension="validity", must_be_ge=-60),
-        _qrule("cancellation_has_reason", "Cancellations should always carry a reason code (per ICAO recommendation)", rule="flight_status.event_type != 'CANCELLED' OR delay_reason_code is not null", dimension="completeness", severity="warning"),
-        _qrule("event_ts_not_future", "Event timestamp cannot be more than 24h in the future", rule="event_ts_utc <= now() + interval 24 hours", dimension="validity"),
-        _qrule("ooooi_ordering", "OOOI events for a single flight must occur in sequence (OUT < OFF < ON < IN)", rule="rolling-window OOOI sequence check per flight_key in flight_status", dimension="consistency", severity="warning"),
-        _qrule("delays_only_positive", "Delays projection must only contain positive delays", rule="flight_status_delays.delay_minutes > 0", dimension="validity", business_impact="critical"),
-        _qrule("cancel_disposition_in_scope", "Cancellations projection must only contain CANCELLED/DIVERTED dispositions", rule="flight_status_cancellations.disposition in ('CANCELLED','DIVERTED')", dimension="validity", business_impact="critical"),
-        _qrule("diversion_has_airport", "Diversions must specify the diverted-to airport", rule="flight_status_cancellations.disposition != 'DIVERTED' OR diverted_airport_iata is not null", dimension="completeness", business_impact="critical"),
-    ],
+    quality=[],  # multi-schema: rules live inside each _schema_entry; top-level kept for ODCS clarity
     tags=["status", "ooooi", "operational", "source-aligned", "multi-schema"],
 )
 
@@ -561,6 +625,12 @@ AVIATION_WEATHER_CONTRACT = _contract(
                 _prop("dew_point_c", "integer"),
                 _prop("altimeter_hpa", "integer", min_=900, max_=1100),
             ],
+            quality=[
+                _qrule("dew_point_le_temp", "Dew point can never exceed air temperature (physical impossibility)", rule="dew_point_c <= temperature_c", dimension="validity", business_impact="critical"),
+                _qrule("wind_speed_max", "Sustained wind above 100kt is hurricane-strength and exceedingly rare", rule="wind_speed_kt <= 100", dimension="validity", severity="warning", must_be_le=100),
+                _qrule("station_id_format", "Station ID must be a 4-character ICAO airport code", rule="station_id matches '^[A-Z]{4}$'", sql_expr="station_id rlike '^[A-Z]{4}$'", dimension="validity"),
+                _qrule("observation_freshness", "METAR observations should not be more than 90 minutes stale during active flight ops", rule="now() - observation_time_utc < interval 90 minutes", sql_expr="observation_time_utc >= now() - interval 90 minutes", dimension="freshness", severity="warning"),
+            ],
         ),
         _schema_entry(
             name="airport_weather_current",
@@ -578,17 +648,15 @@ AVIATION_WEATHER_CONTRACT = _contract(
                 _prop("temperature_c", "integer", min_=-50, max_=60),
                 _prop("flight_category", "string", required=True, enum=["VFR", "MVFR", "IFR", "LIFR"], description="Derived per FAA: VFR > 3000ft & >5sm vis, MVFR 1000-3000ft or 3-5sm, IFR 500-1000ft or 1-3sm, LIFR < 500ft or < 1sm"),
             ],
+            quality=[
+                # Uniqueness is enforced by DQX's is_unique check (separate from sql_expression). Documented here.
+                _qrule("current_one_row_per_station", "Current projection must have exactly one row per station", rule="station_id is unique", dimension="uniqueness", business_impact="critical", runnable=False),
+                _qrule("current_freshness_60min", "Current projection must be no more than 60 min stale", rule="now() - observation_time_utc < interval 60 minutes", sql_expr="observation_time_utc >= now() - interval 60 minutes", dimension="freshness", severity="warning"),
+                _qrule("current_category_derivation", "Flight category must always be derivable from ceiling + visibility", rule="flight_category is not null", dimension="completeness"),
+            ],
         ),
     ],
-    quality=[
-        _qrule("dew_point_le_temp", "Dew point can never exceed air temperature (physical impossibility)", rule="metar_observations.dew_point_c <= temperature_c", dimension="validity", business_impact="critical"),
-        _qrule("wind_speed_max", "Sustained wind above 100kt is hurricane-strength and exceedingly rare", rule="metar_observations.wind_speed_kt <= 100", dimension="validity", severity="warning", must_be_le=100),
-        _qrule("station_id_format", "Station ID must be a 4-character ICAO airport code", rule="station_id matches '^[A-Z]{4}$'", dimension="validity"),
-        _qrule("observation_freshness", "METAR observations should not be more than 90 minutes stale during active flight ops", rule="now() - metar_observations.observation_time_utc < interval 90 minutes", dimension="freshness", severity="warning"),
-        _qrule("current_one_row_per_station", "Current projection must have exactly one row per station", rule="airport_weather_current.station_id is unique", dimension="uniqueness", business_impact="critical"),
-        _qrule("current_freshness_60min", "Current projection must be no more than 60 min stale", rule="now() - airport_weather_current.observation_time_utc < interval 60 minutes", dimension="freshness", severity="warning"),
-        _qrule("current_category_derivation", "Flight category must always be derivable from ceiling + visibility", rule="airport_weather_current.flight_category is not null", dimension="completeness"),
-    ],
+    quality=[],  # multi-schema: rules live inside each _schema_entry
     tags=["weather", "metar", "operational", "source-aligned", "multi-schema"],
 )
 
@@ -621,6 +689,11 @@ AVIATION_REFERENCE_CONTRACT = _contract(
                 _prop("elevation_ft", "integer"),
                 _prop("size_class", "string", enum=["large", "medium", "small"]),
             ],
+            quality=[
+                # Uniqueness needs DQX's is_unique check (not sql_expression); doc-only here.
+                _qrule("airports_icao_unique", "ICAO airport code must be globally unique in the airports table", rule="icao is unique", dimension="uniqueness", business_impact="critical", runnable=False),
+                _qrule("airports_lat_lon_present", "Every airport must have lat/lon for proximity queries", rule="lat is not null and lon is not null", dimension="completeness"),
+            ],
         ),
         _schema_entry(
             name="airlines",
@@ -634,6 +707,9 @@ AVIATION_REFERENCE_CONTRACT = _contract(
                 _prop("name", "string", required=True),
                 _prop("country_iso", "string", required=True, pattern=r"^[A-Z]{2}$"),
                 _prop("alliance", "string"),
+            ],
+            quality=[
+                _qrule("airlines_iata_unique", "Airline IATA code must be globally unique in the airlines table", rule="iata is unique", dimension="uniqueness", business_impact="critical", runnable=False),
             ],
         ),
         _schema_entry(
@@ -653,16 +729,15 @@ AVIATION_REFERENCE_CONTRACT = _contract(
                 _prop("mtow_kg", "integer", description="Maximum Takeoff Weight"),
                 _prop("active_status", "string", enum=["ACTIVE", "STORED", "SCRAPPED", "LEASED_OUT", "UNKNOWN"]),
             ],
+            quality=[
+                _qrule("aircraft_icao24_format", "ICAO 24-bit address must be 6 hex characters", rule="icao24 matches '^[0-9A-F]{6}$'", sql_expr="icao24 rlike '^[0-9A-F]{6}$'", dimension="validity", business_impact="critical"),
+                _qrule("aircraft_tail_number_unique", "Tail number must be globally unique per ICAO Annex 7", rule="tail_number is unique", dimension="uniqueness", business_impact="critical", runnable=False),
+                # Cross-table hygiene check: documented, not DQX-runnable here.
+                _qrule("scrapped_not_in_schedules", "Aircraft marked SCRAPPED should not appear in active flight schedules (cross-product hygiene check)", rule="active_status != 'SCRAPPED' OR tail_number not in safe_skies.scheduling.oag_schedule", dimension="consistency", severity="warning", type_="sql", runnable=False),
+            ],
         ),
     ],
-    quality=[
-        _qrule("airports_icao_unique", "ICAO airport code must be globally unique in the airports table", rule="icao is unique in airports", dimension="uniqueness", business_impact="critical"),
-        _qrule("airports_lat_lon_present", "Every airport must have lat/lon for proximity queries", rule="lat is not null and lon is not null in airports", dimension="completeness"),
-        _qrule("airlines_iata_unique", "Airline IATA code must be globally unique in the airlines table", rule="iata is unique in airlines", dimension="uniqueness", business_impact="critical"),
-        _qrule("aircraft_icao24_format", "ICAO 24-bit address must be 6 hex characters", rule="icao24 matches '^[0-9A-F]{6}$' in aircraft_registry", dimension="validity", business_impact="critical"),
-        _qrule("aircraft_tail_number_unique", "Tail number must be globally unique per ICAO Annex 7", rule="tail_number is unique in aircraft_registry", dimension="uniqueness", business_impact="critical"),
-        _qrule("scrapped_not_in_schedules", "Aircraft marked SCRAPPED should not appear in active flight schedules (cross-product hygiene check)", rule="aircraft_registry.active_status != 'SCRAPPED' OR tail_number not in safe_skies.scheduling.oag_schedule", dimension="consistency", severity="warning", type_="sql"),
-    ],
+    quality=[],  # multi-schema: rules live inside each _schema_entry
     refresh_frequency="monthly",
     sla_freshness_minutes=60 * 24 * 7,  # 7 days
     tags=["reference", "master-data", "source-aligned", "multi-schema"],
@@ -711,7 +786,7 @@ NOTAMS_CONTRACT = _contract(
         _prop("is_active", "boolean"),
     ],
     quality=[
-        _qrule("notam_id_format", "NOTAM ID must follow ICAO format A####/YYYY", rule="notam_id matches '^[A-Z][0-9]{4}/[0-9]{4}$'", dimension="validity"),
+        _qrule("notam_id_format", "NOTAM ID must follow ICAO format A####/YYYY", rule="notam_id matches '^[A-Z][0-9]{4}/[0-9]{4}$'", sql_expr="notam_id rlike '^[A-Z][0-9]{4}/[0-9]{4}$'", dimension="validity"),
         _qrule("valid_to_after_from", "NOTAM valid-to must be after valid-from", rule="valid_to_utc > valid_from_utc", dimension="validity"),
         _qrule("airport_icao_known", "NOTAM ICAO airport code must exist in airports master", rule="icao in (select icao from safe_skies.reference.airports)", dimension="consistency", severity="warning", type_="sql"),
     ],
@@ -747,6 +822,13 @@ GLOBAL_FLIGHT_OPS_CONTRACT = _contract(
                 _prop("max_delay_minutes", "integer"),
                 _prop("tail_number", "string"),
             ],
+            quality=[
+                # Aggregate-based freshness (uses max()) — needs an aggregate-level DQX check; documented here.
+                _qrule("input_freshness", "Aggregate must be no more than 5 min behind its newest input (Live ADS-B)", rule="now() - max(last_event_ts_utc) < interval 5 minutes", dimension="freshness", severity="warning", schedule="every-5m", runnable=False),
+                _qrule("current_flight_key_unique", "Current snapshot: one row per flight", rule="flight_key is unique", dimension="uniqueness", business_impact="critical", runnable=False),
+                # Cross-table composition check: documented.
+                _qrule("composition_coverage", "Every joined flight should have a corresponding row in OAG schedule + Flight Status", rule="flight_key in (select flight_key from safe_skies.scheduling.oag_schedule) and flight_key in (select flight_key from safe_skies.flight_ops.flight_status)", dimension="consistency", type_="sql", runnable=False),
+            ],
         ),
         _schema_entry(
             name="global_flight_ops_history",
@@ -767,6 +849,12 @@ GLOBAL_FLIGHT_OPS_CONTRACT = _contract(
                 _prop("final_disposition", "string", enum=["LANDED", "CANCELLED", "DIVERTED"]),
                 _prop("tail_number", "string"),
             ],
+            quality=[
+                _qrule("history_only_completed", "History port should never contain in-progress flights", rule="final_disposition is not null", dimension="completeness", business_impact="critical"),
+                _qrule("history_disposition_terminal", "Final disposition must be LANDED/CANCELLED/DIVERTED", rule="final_disposition in ('LANDED','CANCELLED','DIVERTED')", dimension="validity"),
+                # Aggregate check — daily count vs trailing-7d average.
+                _qrule("flight_count_floor", "Daily flight count should not drop below 80% of the trailing-7-day average (catches upstream ingest gaps)", rule="daily_count >= 0.8 * trailing_7d_avg", dimension="completeness", severity="warning", type_="sql", runnable=False),
+            ],
         ),
         _schema_entry(
             name="global_flight_ops_event_stream",
@@ -785,18 +873,13 @@ GLOBAL_FLIGHT_OPS_CONTRACT = _contract(
                 _prop("arr_iata", "string"),
                 _prop("payload_json", "string", description="Source-specific event payload, JSON-encoded for schema-agnostic fan-out"),
             ],
+            quality=[
+                _qrule("stream_event_ts_present", "Every event-stream row must carry a UTC timestamp", rule="event_ts_utc is not null", dimension="completeness", business_impact="critical"),
+                _qrule("stream_source_known", "Event source must be a registered source", rule="event_source in ('FLIGHT_STATUS','ADSB','WEATHER','NOTAM')", dimension="validity"),
+            ],
         ),
     ],
-    quality=[
-        _qrule("input_freshness", "Aggregate must be no more than 5 min behind its newest input (Live ADS-B)", rule="now() - max(global_flight_ops_unified.last_event_ts_utc) < interval 5 minutes", dimension="freshness", severity="warning", schedule="every-5m"),
-        _qrule("current_flight_key_unique", "Current snapshot: one row per flight", rule="global_flight_ops_unified.flight_key is unique", dimension="uniqueness", business_impact="critical"),
-        _qrule("history_only_completed", "History port should never contain in-progress flights", rule="global_flight_ops_history.final_disposition is not null", dimension="completeness", business_impact="critical"),
-        _qrule("history_disposition_terminal", "Final disposition must be LANDED/CANCELLED/DIVERTED", rule="global_flight_ops_history.final_disposition in ('LANDED','CANCELLED','DIVERTED')", dimension="validity"),
-        _qrule("stream_event_ts_present", "Every event-stream row must carry a UTC timestamp", rule="global_flight_ops_event_stream.event_ts_utc is not null", dimension="completeness", business_impact="critical"),
-        _qrule("stream_source_known", "Event source must be a registered source", rule="global_flight_ops_event_stream.event_source in ('FLIGHT_STATUS','ADSB','WEATHER','NOTAM')", dimension="validity"),
-        _qrule("flight_count_floor", "Daily flight count should not drop below 80% of the trailing-7-day average (catches upstream ingest gaps)", rule="daily_count >= 0.8 * trailing_7d_avg", dimension="completeness", severity="warning", type_="sql"),
-        _qrule("composition_coverage", "Every joined flight should have a corresponding row in OAG schedule + Flight Status", rule="global_flight_ops_unified.flight_key in (select flight_key from safe_skies.scheduling.oag_schedule) and flight_key in (select flight_key from safe_skies.flight_ops.flight_status)", dimension="consistency", type_="sql"),
-    ],
+    quality=[],  # multi-schema: rules live inside each _schema_entry
     tags=["flight-ops", "aggregate-aligned", "marquee", "multi-schema"],
 )
 
@@ -845,7 +928,7 @@ OTP_METRICS_CONTRACT = _contract(
         _qrule("pct_in_0_100", "All percentage metrics must be in [0, 100]", rule="d0_pct between 0 and 100 and d15_pct between 0 and 100 and d60_pct between 0 and 100", dimension="validity", business_impact="critical"),
         _qrule("d0_le_d15_le_d60", "D0 ≤ D15 ≤ D60 (monotonic cumulative on-time-by-window)", rule="d0_pct <= d15_pct and d15_pct <= d60_pct", dimension="consistency", business_impact="critical"),
         _qrule("flights_floor", "Daily flight count per airline must be ≥ 1 (no orphan rows)", rule="flights >= 1", dimension="completeness", must_be_ge=1),
-        _qrule("daily_freshness", "OTP daily aggregate published by 06:00 UTC the following day", rule="max(service_date) >= current_date - interval 1 day", dimension="freshness", severity="warning", schedule="daily-06:00-UTC"),
+        _qrule("daily_freshness", "OTP daily aggregate published by 06:00 UTC the following day", rule="max(service_date) >= current_date - interval 1 day", dimension="freshness", severity="warning", schedule="daily-06:00-UTC", runnable=False),
     ],
     tags=["otp", "customer-facing", "consumer-aligned"],
 )
