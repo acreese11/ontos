@@ -37,24 +37,30 @@ router = APIRouter(prefix="/api/llm-search", tags=["LLM Search"])
 
 async def get_llm_search_manager(request: Request, db: DBSessionDep) -> LLMSearchManager:
     """Get the LLMSearchManager instance with fresh manager references.
-    
+
     Uses OBO (On-Behalf-Of) workspace client so UC operations run with the
     user's permissions, ensuring proper access control and audit trail.
+    The same OBO token is passed through to the LLM serving endpoint so
+    Databricks-served model calls also run as the user (not the app SP).
     """
     from src.common.config import get_settings
     settings = get_settings()
-    
+
     # Always get fresh manager references from app state
     # This ensures we use the properly initialized managers
     data_products_manager = getattr(request.app.state, 'data_products_manager', None)
     data_contracts_manager = getattr(request.app.state, 'data_contracts_manager', None)
     semantic_models_manager = getattr(request.app.state, 'semantic_models_manager', None)
     search_manager = getattr(request.app.state, 'search_manager', None)
-    
+
     # Get OBO workspace client - uses user's token for proper access control
     # Falls back to SP client if OBO token not available (local dev)
     obo_ws_client = get_obo_workspace_client(request, settings)
-    
+
+    # Forward the OBO bearer token to the LLM client so the chat endpoint
+    # doesn't silently fall back to SP credentials inside _get_openai_client.
+    user_token = request.headers.get("x-forwarded-access-token")
+
     # Create new instance for each request with current db session
     # (Don't cache because we need fresh db session and OBO client)
     return LLMSearchManager(
@@ -64,7 +70,8 @@ async def get_llm_search_manager(request: Request, db: DBSessionDep) -> LLMSearc
         data_contracts_manager=data_contracts_manager,
         semantic_models_manager=semantic_models_manager,
         search_manager=search_manager,
-        workspace_client=obo_ws_client
+        workspace_client=obo_ws_client,
+        user_token=user_token,
     )
 
 

@@ -339,7 +339,8 @@ class LLMSearchManager:
         semantic_models_manager: Optional[Any] = None,
         costs_manager: Optional[Any] = None,
         search_manager: Optional[Any] = None,
-        workspace_client: Optional[Any] = None
+        workspace_client: Optional[Any] = None,
+        user_token: Optional[str] = None,
     ):
         self._db = db
         self._settings = settings
@@ -349,6 +350,9 @@ class LLMSearchManager:
         self._costs_manager = costs_manager
         self._search_manager = search_manager
         self._ws_client = workspace_client
+        # OBO token for downstream LLM calls so the chat path runs as the user,
+        # not the app's SP. Falls back to SP via create_openai_client when None.
+        self._user_token = user_token
         self._session_store = get_session_store()  # Use global singleton
         
         # Initialize tool registry with all default tools
@@ -548,7 +552,7 @@ class LLMSearchManager:
         import time
         
         process_start = time.time()
-        client = self._get_openai_client()
+        client = self._get_openai_client(user_token=self._user_token)
         total_tool_calls = 0
         sources: List[Dict[str, Any]] = []
         max_iterations = 10
