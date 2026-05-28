@@ -35,6 +35,13 @@ logger = get_logger(__name__)
 # strings (and bare-quoted with backticks for column names). When the caller is
 # an LLM tool, the model can be coerced into producing crafted values — strict
 # allow-list before any interpolation.
+#
+# INTENTIONALLY STRICTER THAN UC: this rejects hyphens, which UC technically
+# permits in backtick-quoted names. Because catalog/schema/table are
+# interpolated WITHOUT backticks in the FROM clause (_sample_rows), allowing
+# hyphens would require auditing every interpolation site for correct quoting.
+# Erring safe — a hyphenated catalog gets a clean 422 (route maps ValueError).
+# Loosen only after backtick-quoting all three components everywhere.
 _IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
 
 
@@ -63,7 +70,8 @@ def _sanitize_comment(text: Optional[str]) -> str:
     cleaned = re.sub(r"[^\x20-\x7E]", " ", text)
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
     if len(cleaned) > _COMMENT_MAX_LEN:
-        cleaned = cleaned[:_COMMENT_MAX_LEN] + "…"
+        # ASCII ellipsis — keep the "printable ASCII" invariant the docstring promises.
+        cleaned = cleaned[:_COMMENT_MAX_LEN] + "..."
     return cleaned
 
 
@@ -249,8 +257,13 @@ def _build_user_prompt(
     lines.append("")
     lines.append("Columns (name | source_type | nullable | comment):")
     for c in columns:
+        # name/type_text are UC-derived (lower attacker control than comments,
+        # since UC validates identifiers) but sanitized for consistency so no
+        # owner-influenced metadata reaches the prompt unfiltered.
+        safe_name = _sanitize_comment(c.get("name"))
+        safe_type = _sanitize_comment(c.get("type_text"))
         safe_comment = _sanitize_comment(c.get("comment"))
-        lines.append(f"  - {c['name']} | {c['type_text']} | {c['nullable']} | {safe_comment}")
+        lines.append(f"  - {safe_name} | {safe_type} | {c['nullable']} | {safe_comment}")
     lines.append("")
     lines.append("Per-column statistics (from full table):")
     for c in columns:

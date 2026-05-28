@@ -1986,19 +1986,12 @@ async def run_dqx_validation(
     body = body or DqxRunBody()
 
     # Resolve the callback URL the DQX job will use to reach this app.
-    # Derivation order:
-    #   1. Explicit override from the request body (useful for local dev with
-    #      a tunneled URL, or when posting from a script).
-    #   2. X-Forwarded-Host / X-Forwarded-Proto set by the Databricks Apps
-    #      proxy — the canonical source for "what URL did the user hit?".
-    #   3. The request URL itself (request.url.netloc) — covers localhost
-    #      and any case where the proxy headers aren't present.
-    # This avoids the previous ONTOS_PUBLIC_URL env var, which forced a
-    # config change per deploy target.
-    settings = request.app.state.settings
     # Trust order: proxy-supplied X-Forwarded-* headers (canonical when behind
-    # the Databricks Apps proxy) → request URL (covers localhost). The body
-    # MUST NOT supply this — see DqxRunBody docstring for the SSRF rationale.
+    # the Databricks Apps proxy) → request URL (covers localhost). The request
+    # body MUST NOT supply this — a body-supplied host was an SSRF vector that
+    # received the app SP's OAuth bearer via job logs. See DqxRunBody docstring.
+    # This also replaced the older ONTOS_PUBLIC_URL env var (per-target config).
+    settings = request.app.state.settings
     fwd_host = request.headers.get("x-forwarded-host")
     fwd_proto = request.headers.get("x-forwarded-proto")
     if fwd_host:

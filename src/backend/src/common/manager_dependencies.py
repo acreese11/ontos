@@ -33,7 +33,7 @@ from src.controller.contract_generator_manager import ContractGeneratorManager
 
 # Import other dependencies needed by these providers
 from src.common.database import get_db
-from src.common.workspace_client import get_workspace_client
+from src.common.workspace_client import get_workspace_client, get_obo_workspace_client
 from databricks.sdk import WorkspaceClient
 from src.common.logging import get_logger
 
@@ -109,12 +109,23 @@ def get_contract_generator_manager(request: Request) -> ContractGeneratorManager
     """Lazily build a ContractGeneratorManager from app settings + the contracts manager.
 
     Not stored on app.state because it's a thin wrapper — cheap to create per-request.
+
+    Threads an OBO workspace client so UC column inspection + sample queries on
+    the /preview and /generate routes run as the requesting user, not the app
+    SP. Without this, a user could introspect a table they have no SELECT on
+    and get column metadata + sample rows back via the SP's wider grants. Falls
+    back to the SP client only when no OBO token is present (local dev).
     """
     settings = getattr(request.app.state, 'settings', None)
     contracts_mgr = getattr(request.app.state, 'data_contracts_manager', None)
     if not settings or not contracts_mgr:
         raise HTTPException(status_code=503, detail="Contract generator dependencies not configured.")
-    return ContractGeneratorManager(settings=settings, contracts_manager=contracts_mgr)
+    obo_ws_client = get_obo_workspace_client(request, settings)
+    return ContractGeneratorManager(
+        settings=settings,
+        contracts_manager=contracts_mgr,
+        workspace_client=obo_ws_client,
+    )
 
 def get_semantic_models_manager(request: Request) -> SemanticModelsManager:
     manager = getattr(request.app.state, 'semantic_models_manager', None)
