@@ -268,12 +268,19 @@ async def set_publication_scope(
     # Manager is the single source of truth — see DataProductsManager.set_publication_scope.
     # Route owns auth (PermissionChecker above), input shape, audit, and HTTP status mapping.
     username = current_user.username if current_user else None
+    success = False
     try:
         updated = manager.set_publication_scope(
             product_id=product_id,
             scope=scope,
             current_user=username,
         )
+        success = True
+        return {
+            'publication_scope': updated.publication_scope,
+            'published_at': str(updated.published_at) if updated.published_at else None,
+            'published_by': updated.published_by,
+        }
     except ValueError as ve:
         msg = str(ve)
         if msg.startswith("Invalid scope"):
@@ -286,22 +293,18 @@ async def set_publication_scope(
     except Exception:
         logger.exception("Set publication scope failed for product_id=%s", product_id)
         raise HTTPException(status_code=500, detail="Failed to set publication scope")
-
-    audit_manager.log_action(
-        db=db,
-        username=username,
-        ip_address=request.client.host if request.client else None,
-        feature=DATA_PRODUCTS_FEATURE_ID,
-        action='SET_PUBLICATION_SCOPE',
-        success=True,
-        details={'product_id': product_id, 'scope': scope},
-    )
-
-    return {
-        'publication_scope': updated.publication_scope,
-        'published_at': str(updated.published_at) if updated.published_at else None,
-        'published_by': updated.published_by,
-    }
+    finally:
+        # Audit both success and failure — a denied/invalid scope change is
+        # exactly the kind of event compliance wants a record of.
+        audit_manager.log_action(
+            db=db,
+            username=username,
+            ip_address=request.client.host if request.client else None,
+            feature=DATA_PRODUCTS_FEATURE_ID,
+            action='SET_PUBLICATION_SCOPE',
+            success=success,
+            details={'product_id': product_id, 'scope': scope},
+        )
 
 
 @router.post('/data-products/{product_id}/unpublish')

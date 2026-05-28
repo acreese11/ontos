@@ -29,7 +29,7 @@ _QUALITY_ENTITY_LOOKUP = {
 }
 
 
-def _verify_entity_exists(db, request, *, entity_type: str, entity_id: str) -> None:
+def _verify_entity_exists(db, *, entity_type: str, entity_id: str) -> None:
     """404 if (entity_type, entity_id) doesn't resolve to a real row.
 
     Without this, anyone able to obtain a valid READ_WRITE token for the
@@ -84,7 +84,7 @@ async def create_quality_item(
         # with permission can post a score for a fabricated UUID and pollute the
         # compliance signal (e.g., `active-contracts-have-recent-quality` reads
         # whatever rows match).
-        _verify_entity_exists(db, request, entity_type=entity_type, entity_id=entity_id)
+        _verify_entity_exists(db, entity_type=entity_type, entity_id=entity_id)
         result = manager.create(db, data=payload, user_email=current_user.email)
         success = True
         details["quality_item_id"] = str(result.id)
