@@ -210,32 +210,56 @@ The good news: the deploy infrastructure is largely sound — `e3843c98`, `7729d
 
 ---
 
-## Recommended fix order before 2026-05-31
+## Progress tracker
 
-**P0 (do today):**
-1. Move `_qrule()` into per-schema `quality` lists [#1] — only way the demo's "custom rules" story is true.
-2. Pre-fetch airports CSV, commit to repo [#3].
-3. Remove `ontos_base_url` from `DqxRunBody` [#4].
-4. Add auth + admin gates to contract-generator + demo-data endpoints [#5, #13, #12].
-5. Wipe + re-seed the demo workspace from clean state to avoid the 422 trap [#2].
+### Wave 1 — demo-content fixes (direct-to-dais)
 
-**P1 (do before slides finalize):**
-- OBO threading on `/api/llm-search/chat` and `GenerateContractFromTableTool` [#9, #7]
-- Identifier validation on LLM-supplied catalog/schema/table [#8]
-- Status gate on ODCS pull endpoints [#20]
-- Timezone-aware compliance comparison [#21]
-- DQX run inflight guard [#23]
-- Tag-drop fix [#17]
-- Sanitizer reserved-word check + broken test [#14, #16]
-- Tighten SP bootstrap UC grants on FE [#11]
+| # | Status | Commit | Notes |
+|---|--------|--------|-------|
+| Bot prompt tuning | ✓ DONE | `cfda3d17` | Codifies ontos-specific patterns: OBO vs SP, transaction boundaries, layering, DQX schema-quality |
+| #3 Live HTTP fetch | ✓ DONE | `d3d0bf59` | 250 airports → committed 14KB Parquet snapshot |
+| #1 Custom rules placement | ✓ DONE | `3dcb4b62` | 40 rules now DQX-runnable (was 0); 13 stay docs-only |
+| **Validate on workspace** | ⬜ TODO | — | Run seed + DQX on adb-4279470166116430; confirm log shows "(N from contract)" line |
 
-**P2 (defer post-DAIS):**
-- Manager/route deduplication [#28]
-- Repo→manager layering fix [#29]
-- N+1 cleanups [#18, #22]
-- Owner-team stale-name fix [#19]
-- Seeder real-transaction fix [#26]
-- Recovery script dry-run + scope tightening [#24, #25]
+### Wave 2 — security PRs (through fork PR workflow)
+
+| PR | Status | Findings | Scope |
+|----|--------|----------|-------|
+| PR-A "Auth gates" | ⬜ TODO | #5, #9, #10, #12, #13 | Add `Depends(PermissionChecker(...))` or `require_admin(...)` to contract-generator endpoints, llm-search chat, quality-item ingest, publication_scope manager, demo-data clear/load |
+| PR-B "SP-as-user paths" | ⬜ TODO | #4, #6, #7, #8 | Remove `ontos_base_url` from DqxRunBody; sanitize UC comments before LLM prompt; OBO threading in contract-generator tool; identifier validation |
+| PR-C "Sanitizer + identifier safety" | ⬜ TODO | #11, #14, #15, #16 | Tighten SP bootstrap UC grants on FE; sanitizer reserved-word check; quote search_path; fix CI test |
+
+### Wave 3 — correctness / maintainability (defer to upstream PR pile)
+
+| # | Severity | Where |
+|---|----------|-------|
+| #2 422 on draft contracts | High | `data_contracts_routes.py:2030-2034` — workaround: re-seed before recording (sidesteps the trap) |
+| #17 Tag-drop on contract create | High | `data_contracts_manager.py:2367-2370` |
+| #18 Owner-team N+1 on product list | High | `data_products_manager.py:286, 2379` |
+| #19 Owner-team rename never propagates | High | `data_products_repository.py:74-77` |
+| #20 ODCS pull no status gate | High | `data_contracts_routes.py:1885-1936` |
+| #21 Timezone comparison zeroes scores | High | `compliance_entities.py` |
+| #22 Compliance N+1 | High | same |
+| #23 DQX concurrent runs corrupt quarantine | High | route handler |
+| #24 Recovery script no dry-run | High | `recover-lakebase-sp-access.sh:71-75` |
+| #25 `GRANT ALL` includes TRUNCATE | High | `recover-lakebase-sp-access.sh:72` |
+| #26 Seeder transaction is fake | High | `data_contracts_manager.py:2405` — workaround: seed once from clean DB |
+| #27 Missing IAM scopes in databricks.yaml | Med | `src/databricks.yaml` user_api_scopes |
+| #28 Manager-route duplication | Med | `data_product_routes.py:251-315` |
+| #29 Repo doing manager work | Med | `data_products_repository.py` |
+| #30 `'Safe Skies'` default in shared component | Med | `DataDomainStarburstGraph` |
+| #31 SP bootstrap wipes ACL | Med | `bootstrap-app-permissions.sh:102` |
+| #32 Single-catalog assumption no guard | Med | `definitions.py` `_contract()` |
+| #33 Retired-contract orphans | Med | `seed.py` |
+| #34 Personal email default in seed | Med | `seed.py` |
+| #35 Personal FE workspace host | Med | `databricks.yaml:129` |
+
+### Upstream PR candidates (post-DAIS)
+
+Cross-reference with `memory/project_ontos_upstream_pr_candidates.md`. Items worth promoting:
+- Sanitizer change [`9f924716`] — after #14 + #16 cleanup
+- CI parity check for OAuth scopes [`d5a65593`] — upstream-worthy as-is
+- The DQX schema-quality persistence change in `_create_schema_objects` (this PR) — depends on upstream taking the federated-quality wiring story
 
 ---
 
