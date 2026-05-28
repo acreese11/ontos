@@ -222,13 +222,26 @@ The good news: the deploy infrastructure is largely sound — `e3843c98`, `7729d
 | #1 JSON-encode follow-up | ✓ DONE | `4aac9369` | Caught by local validation: implementation dict needed `json.dumps`/`json.loads` round-trip across the Text column |
 | **Workspace validation** | ✓ DONE | run 127397288570288 | DQX log: `generated 11 rules for schema='adsb_v2'; 0 sibling-schema rules filtered out, 11 apply (6 from the contract's custom quality rules)` — 11826 pass / 24 fail / 99.80% / 24 rows quarantined |
 
-### Wave 2 — security PRs (through fork PR workflow)
+### Wave 2 — security PRs (MERGED to dais 2026-05-28)
 
-| PR | Status | Findings | Scope |
+Reviewed locally (code-reviewer agent per PR, posted to the GitHub PR), all
+review findings folded in before merge. The GitHub Action bot was removed —
+local-review-posted-to-PR is now the pattern (see [[project-fork-workflow]]).
+
+| PR | Status | Findings | Notes |
 |----|--------|----------|-------|
-| PR-A "Auth gates" | ⬜ TODO | #5, #9, #10, #12, #13 | Add `Depends(PermissionChecker(...))` or `require_admin(...)` to contract-generator endpoints, llm-search chat, quality-item ingest, publication_scope manager, demo-data clear/load |
-| PR-B "SP-as-user paths" | ⬜ TODO | #4, #6, #7, #8 | Remove `ontos_base_url` from DqxRunBody; sanitize UC comments before LLM prompt; OBO threading in contract-generator tool; identifier validation |
-| PR-C "Sanitizer + identifier safety" | ⬜ TODO | #11, #14, #15, #16 | Tighten SP bootstrap UC grants on FE; sanitizer reserved-word check; quote search_path; fix CI test |
+| [#1 PR-A "Auth gates"](https://github.com/acreese11/ontos/pull/1) | ✅ MERGED | #5, #9, #10, #12, #13 | + folded: audit-on-failure in `finally`, dropped unused param |
+| [#2 PR-B "SP-as-user paths"](https://github.com/acreese11/ontos/pull/2) | ✅ MERGED | #4, #6, #7, #8 | + folded the big one: **route-path OBO** (the tool-path fix missed `/preview`+`/generate`; now `get_contract_generator_manager` threads OBO). Plus ASCII ellipsis, name/type sanitize, 17 new safety tests |
+| [#3 PR-C "Sanitizer + identifier safety"](https://github.com/acreese11/ontos/pull/3) | ✅ MERGED | #11, #14, #15, #16 | + folded: hoisted reserved set, extracted `is_strict_pg_identifier` shared helper, bootstrap schema-name guard, documented `my-database` relaxation. 31 sanitizer tests pass |
+
+**Attribution (checked vs upstream `main` 2026-05-28):** 11 of 13 findings were
+introduced by our own fork's DAIS feature work (contract-gen, DQX loop, sanitizer
+patch, demo-data endpoints — all net-new surface). Only #9 (llm-chat OBO, structure
+pre-existing; our `25a6449e` SP-fallback amplified it) and #10 (quality-item ingest,
+latent on main; our DQX M2M loop made it reachable) touch upstream code.
+
+**Upstream cherry-pick candidates:** #9 + #10 fixes harden code that exists on
+`databricks labs/ontos`. Cherry-pick into clean PRs against upstream main when ready.
 
 ### Wave 3 — correctness / maintainability (defer to upstream PR pile)
 
