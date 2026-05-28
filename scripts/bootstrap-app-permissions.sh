@@ -73,6 +73,14 @@ ADMIN_GROUP="${ADMIN_GROUP:-admins}"
 SECRET_SCOPE="${SECRET_SCOPE:-ontos-app}"
 SKIP_LAKEBASE="${SKIP_LAKEBASE:-0}"
 
+# Optional: comma-separated list of UC schemas the app needs read/write on.
+# When set, MODIFY/SELECT/CREATE_TABLE/USE_SCHEMA are granted at the SCHEMA
+# level (one PATCH per schema) instead of at the catalog level. Use this on
+# shared catalogs like Free Edition's `workspace` to avoid blanket write
+# privileges across every other schema in that catalog. Leave unset for
+# dedicated app catalogs (e.g. safe_skies on dais-aws).
+TARGET_SCHEMAS="${TARGET_SCHEMAS:-}"
+
 log() { printf '\n=== %s ===\n' "$*"; }
 warn() { printf 'WARN: %s\n' "$*" >&2; }
 
@@ -198,7 +206,40 @@ fi
 # tables or writing quarantine/output tables from background jobs.
 # ---------------------------------------------------------------------------
 log "Step 4: UC grants on catalog '$CATALOG'"
-databricks api patch "/api/2.1/unity-catalog/permissions/catalog/$CATALOG" -p "$PROFILE" --json "$(cat <<JSON
+if [[ -n "$TARGET_SCHEMAS" ]]; then
+  # Scoped mode: catalog level keeps only USE_CATALOG + CREATE_SCHEMA so the
+  # SP can navigate and create the schemas it needs; the actual table-level
+  # privileges (SELECT, MODIFY, CREATE_TABLE, USE_SCHEMA) are bound to the
+  # named schemas only. Safer on shared catalogs (Free Edition).
+  databricks api patch "/api/2.1/unity-catalog/permissions/catalog/$CATALOG" -p "$PROFILE" --json "$(cat <<JSON
+{
+  "changes": [
+    {"principal": "$SP_UUID", "add": ["USE_CATALOG", "CREATE_SCHEMA"]}
+  ]
+}
+JSON
+)" > /dev/null
+  echo "  ok — catalog-scoped: USE_CATALOG, CREATE_SCHEMA on $CATALOG"
+
+  IFS=',' read -r -a SCHEMA_LIST <<< "$TARGET_SCHEMAS"
+  for s in "${SCHEMA_LIST[@]}"; do
+    s_trimmed="$(echo "$s" | xargs)"
+    [[ -z "$s_trimmed" ]] && continue
+    databricks api patch "/api/2.1/unity-catalog/permissions/schema/$CATALOG.$s_trimmed" -p "$PROFILE" --json "$(cat <<JSON
+{
+  "changes": [
+    {"principal": "$SP_UUID", "add": ["USE_SCHEMA", "SELECT", "MODIFY", "CREATE_TABLE"]}
+  ]
+}
+JSON
+)" > /dev/null
+    echo "  ok — schema-scoped: USE_SCHEMA, SELECT, MODIFY, CREATE_TABLE on $CATALOG.$s_trimmed"
+  done
+else
+  # Unscoped mode (legacy default): catalog-wide grants. Acceptable on a
+  # dedicated app catalog like safe_skies. Footgun on shared catalogs —
+  # set TARGET_SCHEMAS to enable the scoped mode.
+  databricks api patch "/api/2.1/unity-catalog/permissions/catalog/$CATALOG" -p "$PROFILE" --json "$(cat <<JSON
 {
   "changes": [
     {"principal": "$SP_UUID", "add": ["USE_CATALOG", "USE_SCHEMA", "SELECT", "MODIFY", "CREATE_TABLE", "CREATE_SCHEMA"]}
@@ -206,7 +247,9 @@ databricks api patch "/api/2.1/unity-catalog/permissions/catalog/$CATALOG" -p "$
 }
 JSON
 )" > /dev/null
-echo "  ok — granted USE_CATALOG, USE_SCHEMA, SELECT, MODIFY, CREATE_TABLE, CREATE_SCHEMA on $CATALOG"
+  echo "  ok — granted USE_CATALOG, USE_SCHEMA, SELECT, MODIFY, CREATE_TABLE, CREATE_SCHEMA on $CATALOG"
+  echo "  hint: pass TARGET_SCHEMAS=schema1,schema2 to scope MODIFY/SELECT/CREATE_TABLE to specific schemas"
+fi
 
 # ---------------------------------------------------------------------------
 # Step 5 — Lakebase schema grants (optional).

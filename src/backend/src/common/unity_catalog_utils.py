@@ -151,24 +151,12 @@ def sanitize_postgres_identifier(identifier: str, max_length: int = 63) -> str:
     if is_valid_uuid(identifier):
         return identifier
 
-    # Databricks principal names (user emails like 'first.last@company.com' and SP names
-    # like 'app-xxxxxx ontos') are valid Lakebase PG role names but contain '@', '.', '-',
-    # and spaces that PG identifiers normally disallow. They are always wrapped in
-    # double-quotes when used in DDL, and the SDK is the source of truth (not user input),
-    # so we accept them after verifying no quote/backslash injection chars are present.
-    if re.match(r'^[a-zA-Z0-9_.@\- ]+$', identifier):
-        return identifier
-
-    # PostgreSQL allows letters, digits, underscores, and dollar signs
-    # Must start with letter or underscore
-    if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_$]*$', identifier):
-        raise ValueError(
-            f"Invalid PostgreSQL identifier '{identifier}': must start with letter or underscore "
-            "and contain only letters, digits, underscores, and dollar signs"
-        )
-    
-    # Check against PostgreSQL reserved keywords (most common ones)
-    # Full list: https://www.postgresql.org/docs/current/sql-keywords-appendix.html
+    # PostgreSQL reserved keywords — applied to BOTH the strict and the
+    # principal-name paths below. Pre-commit, the strict path was the only
+    # caller and reserved-word rejection was applied there; the new
+    # principal-name fast-path used to skip this check entirely, which let
+    # `select@example.com` and `123@example.com` through with reserved/digit
+    # leading tokens. Full list: https://www.postgresql.org/docs/current/sql-keywords-appendix.html
     POSTGRES_RESERVED = {
         'all', 'analyse', 'analyze', 'and', 'any', 'array', 'as', 'asc',
         'asymmetric', 'both', 'case', 'cast', 'check', 'collate', 'column',
@@ -183,12 +171,33 @@ def sanitize_postgres_identifier(identifier: str, max_length: int = 63) -> str:
         'symmetric', 'table', 'then', 'to', 'trailing', 'true', 'union',
         'unique', 'user', 'using', 'variadic', 'when', 'where', 'window', 'with'
     }
-    
-    if identifier.lower() in POSTGRES_RESERVED:
+
+    # Recognize either:
+    #   (a) the strict PG identifier shape: ^[a-zA-Z_][a-zA-Z0-9_$]*$, OR
+    #   (b) the extended principal-name shape used for Databricks user emails
+    #       ('first.last@company.com') and SP display names ('app-xxx ontos').
+    # Both must start with a letter or underscore — '123@example.com' is
+    # rejected even though it's plausibly a Databricks principal, because
+    # callers that ever interpolate without quoting would break.
+    matches_strict = bool(re.match(r'^[a-zA-Z_][a-zA-Z0-9_$]*$', identifier))
+    matches_principal = bool(re.match(r'^[a-zA-Z_][a-zA-Z0-9_.@ -]*$', identifier))
+    if not (matches_strict or matches_principal):
+        raise ValueError(
+            f"Invalid PostgreSQL identifier '{identifier}': must start with letter or underscore "
+            "and contain only letters, digits, underscores, dollar signs, or the "
+            "principal-name chars '.@- '"
+        )
+
+    # Reject reserved keywords on either path. For a principal name like
+    # 'select@example.com', the local part 'select' is the part that matters:
+    # an unquoted interpolation `SET ROLE select@example.com` would parse as
+    # `SET ROLE select` with a SQL-syntax-error tail. Defense-in-depth.
+    head = identifier.split('@', 1)[0].lower()
+    if identifier.lower() in POSTGRES_RESERVED or head in POSTGRES_RESERVED:
         raise ValueError(
             f"Invalid PostgreSQL identifier '{identifier}': cannot use reserved keyword"
         )
-    
+
     return identifier
 
 

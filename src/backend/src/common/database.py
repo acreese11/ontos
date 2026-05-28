@@ -1,4 +1,5 @@
 import os
+import re
 import uuid
 import time
 import threading
@@ -409,6 +410,18 @@ def get_db_url(settings: Settings) -> str:
                 f"Invalid PostgreSQL schema identifier in PGSCHEMA: {e}. "
                 "Please check configuration."
             ) from e
+        # search_path is interpolated into a libpq options string. libpq's
+        # parser treats whitespace and `-` characters loosely, so the value
+        # MUST match the strict PG identifier shape — principal-name shapes
+        # the sanitizer also accepts (with '-', '.', '@', spaces) would break
+        # libpq parsing. Validate here, not in the sanitizer, because the
+        # sanitizer's contract is "safe inside double-quoted DDL" — which is
+        # broader than "safe in a libpq -c<param>=<value> options string".
+        if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_$]*$', validated_schema):
+            raise ValueError(
+                f"PGSCHEMA must be a strict PG identifier when used in libpq "
+                f"options (no '-', '.', '@', or spaces). Got: {validated_schema!r}"
+            )
         options_list.append(f"-csearch_path={validated_schema}")
         logger.info(f"PostgreSQL schema will be set via options: {validated_schema}")
     else:
