@@ -21,6 +21,32 @@ def get_quality_manager() -> QualityManager:
     return QualityManager()
 
 
+# Entity types accepted on the quality-item ingestion path. Anything else fails
+# closed so a forged entity_type doesn't sneak past the existence check.
+_QUALITY_ENTITY_LOOKUP = {
+    "data_contract": ("src.repositories.data_contracts_repository", "data_contract_repo"),
+    "data_product": ("src.repositories.data_products_repository", "data_product_repo"),
+}
+
+
+def _verify_entity_exists(db, request, *, entity_type: str, entity_id: str) -> None:
+    """404 if (entity_type, entity_id) doesn't resolve to a real row.
+
+    Without this, anyone able to obtain a valid READ_WRITE token for the
+    `data-domains` feature can POST a score for a fabricated UUID and pollute
+    the compliance signal. Return 404 (not 400) so callers can't enumerate
+    valid entity IDs by error code.
+    """
+    target = _QUALITY_ENTITY_LOOKUP.get(entity_type)
+    if not target:
+        raise HTTPException(status_code=404, detail="Entity not found")
+    module_path, attr = target
+    from importlib import import_module
+    repo = getattr(import_module(module_path), attr)
+    if repo.get(db=db, id=entity_id) is None:
+        raise HTTPException(status_code=404, detail="Entity not found")
+
+
 # ── CRUD ─────────────────────────────────────────────────────────────────
 
 
@@ -54,6 +80,11 @@ async def create_quality_item(
     try:
         if payload.entity_type != entity_type or payload.entity_id != entity_id:
             raise HTTPException(status_code=400, detail="Entity path does not match body")
+        # Verify the entity actually exists. Without this guard, any M2M caller
+        # with permission can post a score for a fabricated UUID and pollute the
+        # compliance signal (e.g., `active-contracts-have-recent-quality` reads
+        # whatever rows match).
+        _verify_entity_exists(db, request, entity_type=entity_type, entity_id=entity_id)
         result = manager.create(db, data=payload, user_email=current_user.email)
         success = True
         details["quality_item_id"] = str(result.id)
