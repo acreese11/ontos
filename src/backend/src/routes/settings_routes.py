@@ -20,6 +20,7 @@ from ..common.dependencies import (
     AuditCurrentUserDep,
     DBSessionDep,
 )
+from ..common.authorization import require_admin
 from ..common.manager_dependencies import (
     get_data_domain_manager,
     get_data_products_manager,
@@ -550,6 +551,7 @@ async def clear_aviation_demo_endpoint(
     products_mgr=Depends(get_data_products_manager),
     contracts_mgr=Depends(get_data_contracts_manager),
     domain_mgr=Depends(get_data_domain_manager),
+    _: bool = Depends(require_admin(SETTINGS_FEATURE_ID)),
 ):
     """Clear aviation demo data (products + contracts) so a fresh seed runs cleanly.
 
@@ -603,6 +605,7 @@ async def load_aviation_demo_endpoint(
     contracts_mgr=Depends(get_data_contracts_manager),
     er_mgr=Depends(_get_er_manager),
     sub_mgr=Depends(_get_sub_manager),
+    _: bool = Depends(require_admin(SETTINGS_FEATURE_ID)),
 ):
     """Load the Safe Skies aviation demo via Ontos manager calls (no SQL).
 
