@@ -219,7 +219,8 @@ The good news: the deploy infrastructure is largely sound — `e3843c98`, `7729d
 | Bot prompt tuning | ✓ DONE | `cfda3d17` | Codifies ontos-specific patterns: OBO vs SP, transaction boundaries, layering, DQX schema-quality |
 | #3 Live HTTP fetch | ✓ DONE | `d3d0bf59` | 250 airports → committed 14KB Parquet snapshot |
 | #1 Custom rules placement | ✓ DONE | `3dcb4b62` | 40 rules now DQX-runnable (was 0); 13 stay docs-only |
-| **Validate on workspace** | ⬜ TODO | — | Run seed + DQX on adb-4279470166116430; confirm log shows "(N from contract)" line |
+| #1 JSON-encode follow-up | ✓ DONE | `4aac9369` | Caught by local validation: implementation dict needed `json.dumps`/`json.loads` round-trip across the Text column |
+| **Workspace validation** | ✓ DONE | run 127397288570288 | DQX log: `generated 11 rules for schema='adsb_v2'; 0 sibling-schema rules filtered out, 11 apply (6 from the contract's custom quality rules)` — 11826 pass / 24 fail / 99.80% / 24 rows quarantined |
 
 ### Wave 2 — security PRs (through fork PR workflow)
 
