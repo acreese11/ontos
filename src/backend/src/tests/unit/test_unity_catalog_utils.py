@@ -121,6 +121,23 @@ class TestUnityCatalogUtils:
         callers double-quote them when interpolating into DDL."""
         assert sanitize_postgres_identifier("alan.reese@databricks.com") == "alan.reese@databricks.com"
         assert sanitize_postgres_identifier("app-xxxxxx ontos") == "app-xxxxxx ontos"
+        # Hyphenated names are now accepted (the principal-name shape allows
+        # '-' for SP display names). This is an INTENTIONAL behavior change from
+        # the old strict-only sanitizer, which rejected "my-database". Documented
+        # here so the relaxation is a deliberate, tested decision — not a regression.
+        assert sanitize_postgres_identifier("my-database") == "my-database"
+
+    def test_is_strict_pg_identifier(self):
+        """The shared strict-shape helper used by the libpq search_path call
+        site — must reject anything the principal-name path additionally allows."""
+        from src.common.unity_catalog_utils import is_strict_pg_identifier
+        assert is_strict_pg_identifier("app_ontos") is True
+        assert is_strict_pg_identifier("_x") is True
+        assert is_strict_pg_identifier("my-schema") is False   # hyphen
+        assert is_strict_pg_identifier("a.b") is False          # dot
+        assert is_strict_pg_identifier("a b") is False          # space
+        assert is_strict_pg_identifier("u@h") is False          # at
+        assert is_strict_pg_identifier("") is False
 
     def test_sanitize_postgres_identifier_reserved_keyword_in_principal_name(self):
         """A principal name whose local part is a reserved keyword

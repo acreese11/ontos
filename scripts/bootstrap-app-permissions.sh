@@ -225,6 +225,13 @@ JSON
   for s in "${SCHEMA_LIST[@]}"; do
     s_trimmed="$(echo "$s" | xargs)"
     [[ -z "$s_trimmed" ]] && continue
+    # Guard before interpolating into the UC REST path. A value like
+    # 'foo/../bar' would otherwise produce a malformed path; the API rejects
+    # it but with a cryptic 404. Fail fast with a clear message instead.
+    if ! [[ "$s_trimmed" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]]; then
+      warn "Skipping invalid schema name in TARGET_SCHEMAS: '$s_trimmed'"
+      continue
+    fi
     databricks api patch "/api/2.1/unity-catalog/permissions/schema/$CATALOG.$s_trimmed" -p "$PROFILE" --json "$(cat <<JSON
 {
   "changes": [

@@ -1,5 +1,4 @@
 import os
-import re
 import uuid
 import time
 import threading
@@ -25,6 +24,7 @@ from src.common.workspace_client import get_workspace_client
 from src.common.unity_catalog_utils import (
     ensure_catalog_exists,
     ensure_schema_exists,
+    is_strict_pg_identifier,
     sanitize_postgres_identifier,
 )
 # Import SDK components
@@ -414,10 +414,11 @@ def get_db_url(settings: Settings) -> str:
         # parser treats whitespace and `-` characters loosely, so the value
         # MUST match the strict PG identifier shape — principal-name shapes
         # the sanitizer also accepts (with '-', '.', '@', spaces) would break
-        # libpq parsing. Validate here, not in the sanitizer, because the
-        # sanitizer's contract is "safe inside double-quoted DDL" — which is
-        # broader than "safe in a libpq -c<param>=<value> options string".
-        if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_$]*$', validated_schema):
+        # libpq parsing. This stricter check lives at the call site (not the
+        # sanitizer, whose contract is "safe inside double-quoted DDL", which
+        # is broader than "safe in a libpq -c<param>=<value> options string").
+        # Shared shape check so it can't drift from the sanitizer's definition.
+        if not is_strict_pg_identifier(validated_schema):
             raise ValueError(
                 f"PGSCHEMA must be a strict PG identifier when used in libpq "
                 f"options (no '-', '.', '@', or spaces). Got: {validated_schema!r}"
