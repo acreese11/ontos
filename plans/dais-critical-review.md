@@ -243,6 +243,14 @@ latent on main; our DQX M2M loop made it reachable) touch upstream code.
 **Upstream cherry-pick candidates:** #9 + #10 fixes harden code that exists on
 `databricks labs/ontos`. Cherry-pick into clean PRs against upstream main when ready.
 
+**Workspace validation (dais-aws, deploy 2026-05-28T22:33Z):**
+- ✅ PR-C boot — app RUNNING; `search_path` strict-identifier check didn't break startup
+- ✅ PR-B #4 SSRF — body `ontos_base_url:"https://attacker.example"` ignored; server returned the real app host
+- ✅ PR-B #8 identifier injection — `foo;DROP` → HTTP 422 (ValueError mapped), not 500
+- ✅ PR-A auth gates — endpoints respond for the authorized user (earlier 403 was a stale in-progress deploy)
+- ✅ DQX federated-quality regression check — re-ran on `live_flights`: 11 rules, 6 from custom quality, 99.80%, 24 quarantined — identical to Wave 1
+- ⚠️ PR-B #7 route-path OBO (`/contract-generator/preview`) — returns 500 on dais-aws. NOT a Wave 2 regression: the no-OBO code path is byte-identical pre/post the factory change (both fall back to SP via `get_obo_workspace_client`). Ruled out UC SELECT + warehouse (DQX SELECTs the same table fine) and LLM endpoint (READY, llm-search/status 200). Most likely the app SP lacks CAN_QUERY on `databricks-claude-opus-4-7`, or a contract-gen-specific bug — pre-existing (feature never smoke-tested on dais-aws). Also: true OBO-as-user can only be verified through a browser SSO session, not a PAT-bearer curl (no `x-forwarded-access-token`). Open item, separate from Wave 2.
+
 ### Wave 3 — correctness / maintainability (defer to upstream PR pile)
 
 | # | Severity | Where |
