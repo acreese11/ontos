@@ -25,8 +25,19 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # track_progress creates a sticky tracking comment AND enables the
+          # GitHub comment tools (update_claude_comment + create_inline_comment)
+          # so the agent can actually publish its review on pull_request events.
+          # Without it, the agent reviews but has no tool to post — the run
+          # succeeds silently and "No buffered inline comments" appears in logs.
+          track_progress: true
           # Critical-review prompt; biased toward signal over nits.
           prompt: |
+            Review PR #${{ github.event.pull_request.number }} in
+            ${{ github.repository }}. Post your findings as inline review
+            comments on the specific lines, plus update the tracking comment
+            with the summary.
+
             You are reviewing a PR into the `dais` branch of the ontos fork
             (DAIS 2026 "Safe Skies" demo build on top of databrickslabs/ontos,
             Apache 2.0; full conventions in CLAUDE.md at the repo root).
@@ -120,4 +131,3 @@ jobs:
               a Suggestion, not Critical.
             - If you can't tell whether a callsite handles something correctly
               from the diff alone, ask — don't assume the worst.
-          use_sticky_comment: true
