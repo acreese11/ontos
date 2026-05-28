@@ -800,9 +800,15 @@ class DataProductsManager(DeliveryMixin, SearchableAsset):
     ) -> DataProductApi:
         """Set the marketplace publication scope for a data product.
 
-        Mirrors the logic in `POST /data-products/{id}/set-publication-scope`. Hoisting it
-        from the route into the manager so other internal callers (the demo seeder, batch
-        importers, workflow steps) can use the same code path without going through HTTP.
+        Single source of truth for both the HTTP route and internal callers
+        (demo seeder, batch importers, workflow steps).
+
+        **Authorization:** This method does not enforce permissions itself.
+        HTTP callers go through `POST /data-products/{id}/set-publication-scope`,
+        which is gated by `PermissionChecker(DATA_PRODUCTS_FEATURE_ID,
+        FeatureAccessLevel.READ_WRITE)`. Internal callers (seeders, jobs) are
+        trusted by construction. Do not expose this method to a new HTTP path
+        without adding a `PermissionChecker` gate at that route.
 
         Args:
             product_id: ID of the product

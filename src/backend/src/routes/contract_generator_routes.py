@@ -8,7 +8,9 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from src.common.authorization import PermissionChecker
 from src.common.dependencies import DBSessionDep
+from src.common.features import FeatureAccessLevel
 from src.common.manager_dependencies import (
     get_contract_generator_manager,
     get_data_contracts_manager,
@@ -40,6 +42,7 @@ async def preview_contract(
     body: GenerateRequest,
     gen: ContractGeneratorManager = Depends(get_contract_generator_manager),
     x_forwarded_access_token: Optional[str] = Header(default=None),
+    _: bool = Depends(PermissionChecker('data-contracts', FeatureAccessLevel.READ_WRITE)),
 ):
     """Generate a draft contract and return it WITHOUT persisting."""
     try:
@@ -50,6 +53,9 @@ async def preview_contract(
             sample_size=body.sample_size,
             user_token=_user_token(x_forwarded_access_token),
         )
+    except ValueError as e:
+        # Identifier validation failure or similar bad-input from the manager.
+        raise HTTPException(status_code=422, detail=str(e))
     except RuntimeError as e:
         logger.warning(f"Contract generation failed: {e}")
         raise HTTPException(status_code=400, detail=str(e))
@@ -69,6 +75,7 @@ async def generate_and_save(
     db: DBSessionDep,
     gen: ContractGeneratorManager = Depends(get_contract_generator_manager),
     x_forwarded_access_token: Optional[str] = Header(default=None),
+    _: bool = Depends(PermissionChecker('data-contracts', FeatureAccessLevel.READ_WRITE)),
 ):
     """Generate a draft contract and persist it."""
     try:
@@ -87,6 +94,9 @@ async def generate_and_save(
             user_token=_user_token(x_forwarded_access_token),
             force=body.force,
         )
+    except ValueError as e:
+        # Identifier validation failure or similar bad-input from the manager.
+        raise HTTPException(status_code=422, detail=str(e))
     except RuntimeError as e:
         logger.warning(f"Contract generation failed: {e}")
         raise HTTPException(status_code=400, detail=str(e))

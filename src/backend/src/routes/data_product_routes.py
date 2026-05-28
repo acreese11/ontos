@@ -264,55 +264,47 @@ async def set_publication_scope(
     Body: { "scope": "none" | "domain" | "organization" | "external" }
     Product must be active to publish.
     """
-    from datetime import datetime, timezone
     scope = body.get("scope", "none")
-    valid_scopes = ["none", "domain", "organization", "external"]
-    if scope not in valid_scopes:
-        raise HTTPException(status_code=422, detail=f"Invalid scope. Must be one of: {valid_scopes}")
-
+    # Manager is the single source of truth — see DataProductsManager.set_publication_scope.
+    # Route owns auth (PermissionChecker above), input shape, audit, and HTTP status mapping.
+    username = current_user.username if current_user else None
+    success = False
     try:
-        product_db = manager._repo.get(db=db, id=product_id)
-        if not product_db:
-            raise HTTPException(status_code=404, detail="Data product not found")
-
-        if scope != "none" and product_db.status != "active":
-            raise HTTPException(
-                status_code=409,
-                detail=f"Product must be active to publish. Current status: {product_db.status}"
-            )
-
-        product_db.publication_scope = scope
-        if scope != "none":
-            product_db.published_at = datetime.now(timezone.utc)
-            product_db.published_by = current_user.username if current_user else None
-        else:
-            product_db.published_at = None
-            product_db.published_by = None
-        db.add(product_db)
-        db.commit()
-        db.refresh(product_db)
-
+        updated = manager.set_publication_scope(
+            product_id=product_id,
+            scope=scope,
+            current_user=username,
+        )
+        success = True
+        return {
+            'publication_scope': updated.publication_scope,
+            'published_at': str(updated.published_at) if updated.published_at else None,
+            'published_by': updated.published_by,
+        }
+    except ValueError as ve:
+        msg = str(ve)
+        if msg.startswith("Invalid scope"):
+            raise HTTPException(status_code=422, detail=msg)
+        if "not found" in msg:
+            raise HTTPException(status_code=404, detail=msg)
+        if "must be active" in msg:
+            raise HTTPException(status_code=409, detail=msg)
+        raise HTTPException(status_code=400, detail=msg)
+    except Exception:
+        logger.exception("Set publication scope failed for product_id=%s", product_id)
+        raise HTTPException(status_code=500, detail="Failed to set publication scope")
+    finally:
+        # Audit both success and failure — a denied/invalid scope change is
+        # exactly the kind of event compliance wants a record of.
         audit_manager.log_action(
             db=db,
-            username=current_user.username,
+            username=username,
             ip_address=request.client.host if request.client else None,
             feature=DATA_PRODUCTS_FEATURE_ID,
             action='SET_PUBLICATION_SCOPE',
-            success=True,
-            details={'product_id': product_id, 'scope': scope}
+            success=success,
+            details={'product_id': product_id, 'scope': scope},
         )
-
-        return {
-            'publication_scope': product_db.publication_scope,
-            'published_at': str(product_db.published_at) if product_db.published_at else None,
-            'published_by': product_db.published_by,
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        db.rollback()
-        logger.exception("Set publication scope failed for product_id=%s", product_id)
-        raise HTTPException(status_code=500, detail="Failed to set publication scope")
 
 
 @router.post('/data-products/{product_id}/unpublish')
