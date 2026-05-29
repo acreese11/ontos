@@ -252,30 +252,34 @@ latent on main; our DQX M2M loop made it reachable) touch upstream code.
 - ✅ PR-B #7 route-path OBO — RESOLVED. The `/contract-generator/preview` 500 was root-caused (via `/logz` WebSocket stream) to `400 BAD_REQUEST: Model us.anthropic.claude-opus-4-7 does not support the temperature parameter`. Pre-existing contract-gen bug (temperature=0.2), not a Wave 2 regression — and the failing call logged `auth=user_token`, confirming the OBO threading works. Fixed by `llm_client.chat_completion()` (retry-without-temperature); routed contract-gen + ontology-gen (3 call sites) through it. Re-deployed (deploy `01f15b56d26b`): `/preview` on `safe_skies.flight_ops.adsb_v2` → **HTTP 200**, 18-col contract, all 5 steps, model `databricks-claude-opus-4-7`.
   - Two transient/observed-not-bugs along the way: (1) a `/generate` 403 was a Lakebase `SSL connection has been closed unexpectedly` after ~13h idle → role lookup failed → `authorization_manager` fell back to NONE access → PR-A gate correctly failed *closed*. Not a code issue; first-query-on-stale-pooled-connection. Worth a pool `pool_pre_ping` if it recurs. (2) true OBO-as-user still only fully exercised via browser SSO (PAT-bearer curl resolves to SP fallback), but the live 200 + `auth=user_token` log confirm the path.
 
-### Wave 3 — correctness / maintainability (defer to upstream PR pile)
+### Wave 3 — correctness / maintainability (worked through PRs #4–#7, 2026-05-29)
 
-| # | Severity | Where |
-|---|----------|-------|
-| #2 422 on draft contracts | High | `data_contracts_routes.py:2030-2034` — workaround: re-seed before recording (sidesteps the trap) |
-| #17 Tag-drop on contract create | High | `data_contracts_manager.py:2367-2370` |
-| #18 Owner-team N+1 on product list | High | `data_products_manager.py:286, 2379` |
-| #19 Owner-team rename never propagates | High | `data_products_repository.py:74-77` |
-| #20 ODCS pull no status gate | High | `data_contracts_routes.py:1885-1936` |
-| #21 Timezone comparison zeroes scores | High | `compliance_entities.py` |
-| #22 Compliance N+1 | High | same |
-| #23 DQX concurrent runs corrupt quarantine | High | route handler |
-| #24 Recovery script no dry-run | High | `recover-lakebase-sp-access.sh:71-75` |
-| #25 `GRANT ALL` includes TRUNCATE | High | `recover-lakebase-sp-access.sh:72` |
-| #26 Seeder transaction is fake | High | `data_contracts_manager.py:2405` — workaround: seed once from clean DB |
-| #27 Missing IAM scopes in databricks.yaml | Med | `src/databricks.yaml` user_api_scopes |
-| #28 Manager-route duplication | Med | `data_product_routes.py:251-315` |
-| #29 Repo doing manager work | Med | `data_products_repository.py` |
-| #30 `'Safe Skies'` default in shared component | Med | `DataDomainStarburstGraph` |
-| #31 SP bootstrap wipes ACL | Med | `bootstrap-app-permissions.sh:102` |
-| #32 Single-catalog assumption no guard | Med | `definitions.py` `_contract()` |
-| #33 Retired-contract orphans | Med | `seed.py` |
-| #34 Personal email default in seed | Med | `seed.py` |
-| #35 Personal FE workspace host | Med | `databricks.yaml:129` |
+All via branch+PR with local-review-posted-to-PR (enforced PR-only flow).
+
+| # | Severity | Status |
+|---|----------|--------|
+| #21 Timezone comparison zeroes scores | High | ✅ PR #4 (tz-aware compare) |
+| #22 Compliance N+1 | High | ✅ PR #4 (bulk subquery) |
+| #2 422 on draft contracts | High | ✅ PR #5 (Run-DQX button disabled when schemaless; backend 422 stays correct) |
+| #20 ODCS pull no status gate | High | ✅ PR #5 (`_assert_pullable`, active/approved only, 404 else) |
+| #23 DQX concurrent runs corrupt quarantine | High | ✅ PR #5 (`app.state.dqx_inflight` 409 guard) |
+| #19 Owner-team rename never propagates | High | ✅ PR #6 (update-or-create; +Session.get fix) |
+| #29 Repo doing manager work | Med | ✅ PR #6 (dropped repo→repo import) |
+| #24 Recovery script no dry-run | High | ✅ PR #7 (confirm gate, TTY/ASSUME_YES aware) |
+| #25 `GRANT ALL` includes TRUNCATE | High | ✅ PR #7 (least-privilege CRUD) |
+| #31 SP bootstrap wipes ACL | Med | ✅ PR #7 (read-merge-write ACL) |
+| #32 Single-catalog assumption no guard | Med | ✅ PR #7 (assert in `_contract()`) |
+| #28 Manager-route duplication | Med | ✅ already fixed in PR #1 (set_publication_scope route now delegates) |
+| #27 Missing IAM scopes in databricks.yaml | Med | ❌ WON'T-FIX — false finding. `check-user-api-scopes-parity.py` defines `IAM_DEFAULTS` and errors if `iam.*` appear in databricks.yaml (Apps update API rejects them); they live in manifest.yaml only. Adding them breaks deploy. |
+| #18 Owner-team N+1 on product list | High | ⏸️ DEFERRED — `_load_product_with_tags` has 7 callers, hot read path, ~tens of indexed lookups at demo scale. Batching is broader/riskier; not worth it pre-demo. |
+| #17 Tag-drop on contract create | High | ⏸️ DEFERRED — review's fix writes to legacy `DataContractTagDb`, but `AssignedTagCreate` tags belong in the unified assigned-tag system (round-trip test confirmed tags still don't surface). Needs dual-tag-system wiring understood first. |
+| #26 Seeder transaction is fake | High | ⏸️ DEFERRED — making `create_contract_with_relations` not-commit-internally is a broad change to commit semantics across all callers; risky pre-demo, "seed from clean DB" workaround in place. |
+| #30 `'Safe Skies'` default in shared component | Med | → upstream cleanup (intentional demo default; only matters when upstreaming) |
+| #33 Retired-contract orphans | Med | → upstream/seed cleanup (only bites workspaces that ran the old seed) |
+| #34 Personal email default in seed | Med | → upstream cleanup (intentional demo default) |
+| #35 Personal FE workspace host | Med | → upstream cleanup (intentional demo target) |
+
+**Net:** 11 fixed (PRs #4–#7) + #28 already done; #27 won't-fix (false finding); #17/#18/#26 deferred with documented reasons; #30/#33/#34/#35 folded into the upstream-cleanup track (they're intentional demo defaults, not fork bugs).
 
 ### Upstream PR candidates (post-DAIS)
 
