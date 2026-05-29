@@ -1871,9 +1871,13 @@ export default function DataContractDetails() {
           <Button
             variant="outline"
             onClick={runDqxValidation}
-            disabled={runningDqx}
+            disabled={runningDqx || !contract?.schema?.length}
             size="sm"
-            title="Submit a one-off DQX validation. Production enforcement should live in the pipeline that produces the data; this button is for ad-hoc validation runs."
+            title={
+              !contract?.schema?.length
+                ? "This contract has no schemas to validate. Add a schema first."
+                : "Submit a one-off DQX validation. Production enforcement should live in the pipeline that produces the data; this button is for ad-hoc validation runs."
+            }
           >
             {runningDqx
               ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />

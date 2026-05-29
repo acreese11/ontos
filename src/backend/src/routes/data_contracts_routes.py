@@ -1882,6 +1882,21 @@ def _check_not_modified(request: Request, etag: str):
     return None
 
 
+# Only published contracts are pullable via the machine endpoints. Draft /
+# deprecated / retired contracts 404 here (not 403) so a READ_ONLY caller
+# can't enumerate them or pull their full ODCS body by guessing UUIDs. The
+# browser export endpoint (/odcs/export) is intentionally NOT gated — it's
+# for authors inspecting their own in-progress contracts in the UI. (review #20)
+_PULLABLE_CONTRACT_STATUSES = {"active", "approved"}
+
+
+def _assert_pullable(db_obj):
+    status = (getattr(db_obj, "status", None) or "").lower()
+    if status not in _PULLABLE_CONTRACT_STATUSES:
+        # 404, not 403 — don't reveal that the contract exists-but-isn't-published.
+        raise HTTPException(status_code=404, detail="Contract not found")
+
+
 @router.get('/data-contracts/{contract_id}/odcs.yaml')
 async def get_odcs_yaml(
     contract_id: str,
@@ -1895,6 +1910,7 @@ async def get_odcs_yaml(
     db_obj = data_contract_repo.get_with_all(db, id=contract_id)
     if not db_obj:
         raise HTTPException(status_code=404, detail="Contract not found")
+    _assert_pullable(db_obj)
     etag = _odcs_etag(db_obj)
     not_modified = _check_not_modified(request, etag)
     if not_modified is not None:
@@ -1925,6 +1941,7 @@ async def get_odcs_json(
     db_obj = data_contract_repo.get_with_all(db, id=contract_id)
     if not db_obj:
         raise HTTPException(status_code=404, detail="Contract not found")
+    _assert_pullable(db_obj)
     etag = _odcs_etag(db_obj)
     not_modified = _check_not_modified(request, etag)
     if not_modified is not None:
@@ -2049,68 +2066,92 @@ async def run_dqx_validation(
     if host and not (host.startswith('http://') or host.startswith('https://')):
         host = f"https://{host}"
 
-    runs: list[dict] = []
-    failures: list[dict] = []
-    for idx in target_indices:
-        schema_obj = schema_objects[idx]
-        try:
-            run_id = jobs_manager.submit_workflow(
-                'dqx_contract_validation',
-                job_parameters={
-                    'contract_id': contract_id,
-                    'ontos_base_url': ontos_base_url,
-                    'pipeline_id': body.pipeline_id,
-                    'schema_index': str(idx),
-                    'write_quarantine': 'true' if body.write_quarantine else 'false',
-                    # The job pulls the OAuth M2M creds from a Databricks Secrets
-                    # scope at runtime using its own runtime credentials. We pass
-                    # only the scope+key NAMES (not values) — secret-ref
-                    # substitution doesn't cascade through {{job.parameters.foo}}.
-                    'databricks_host': host.removeprefix('https://').removeprefix('http://') if host else '',
-                    'secrets_scope': settings.APP_SECRETS_SCOPE,
-                    'client_id_key': settings.APP_SECRETS_CLIENT_ID_KEY,
-                    'client_secret_key': settings.APP_SECRETS_CLIENT_SECRET_KEY,
-                },
-                run_name_suffix=f"{contract_id[:8]}-{schema_obj.name or f'schema{idx}'}",
-            )
-        except Exception as e:
-            logger.exception(
-                "Failed to submit DQX validation run for contract %s schema_index=%d (%s)",
-                contract_id, idx, schema_obj.name,
-            )
-            failures.append({
+    # Concurrent-run guard: two rapid clicks (or an agent + a user) would each
+    # submit a full set of runs that append to the same quarantine table and
+    # post duplicate QualityItems. Reject a second in-flight submission for the
+    # same contract. In-memory is sufficient — Databricks Apps runs a single
+    # uvicorn process, and there's no await between the check and the add so the
+    # event loop can't interleave them. (review #23)
+    # Normally initialized in startup_tasks; lazily create as a fallback for
+    # paths that don't run startup (e.g. tests). This block and the add below
+    # are await-free, so the event loop cannot interleave the check and the add.
+    inflight = getattr(request.app.state, 'dqx_inflight', None)
+    if inflight is None:
+        inflight = set()
+        request.app.state.dqx_inflight = inflight
+    if contract_id in inflight:
+        # NB: this 409 raises BEFORE the try below, so it never reaches the
+        # finally — a concurrent caller's inflight entry is never discarded here.
+        raise HTTPException(
+            status_code=409,
+            detail="A DQX validation run for this contract is already in flight.",
+        )
+    inflight.add(contract_id)
+    try:
+        runs: list[dict] = []
+        failures: list[dict] = []
+        for idx in target_indices:
+            schema_obj = schema_objects[idx]
+            try:
+                run_id = jobs_manager.submit_workflow(
+                    'dqx_contract_validation',
+                    job_parameters={
+                        'contract_id': contract_id,
+                        'ontos_base_url': ontos_base_url,
+                        'pipeline_id': body.pipeline_id,
+                        'schema_index': str(idx),
+                        'write_quarantine': 'true' if body.write_quarantine else 'false',
+                        # The job pulls the OAuth M2M creds from a Databricks Secrets
+                        # scope at runtime using its own runtime credentials. We pass
+                        # only the scope+key NAMES (not values) — secret-ref
+                        # substitution doesn't cascade through {{job.parameters.foo}}.
+                        'databricks_host': host.removeprefix('https://').removeprefix('http://') if host else '',
+                        'secrets_scope': settings.APP_SECRETS_SCOPE,
+                        'client_id_key': settings.APP_SECRETS_CLIENT_ID_KEY,
+                        'client_secret_key': settings.APP_SECRETS_CLIENT_SECRET_KEY,
+                    },
+                    run_name_suffix=f"{contract_id[:8]}-{schema_obj.name or f'schema{idx}'}",
+                )
+            except Exception as e:
+                logger.exception(
+                    "Failed to submit DQX validation run for contract %s schema_index=%d (%s)",
+                    contract_id, idx, schema_obj.name,
+                )
+                failures.append({
+                    'schema_index': idx,
+                    'schema_name': schema_obj.name,
+                    'error': f"{type(e).__name__}: {e}",
+                })
+                continue
+            runs.append({
                 'schema_index': idx,
                 'schema_name': schema_obj.name,
-                'error': f"{type(e).__name__}: {e}",
+                'physical_name': schema_obj.physical_name,
+                'run_id': run_id,
+                'monitor_url': f"{host}/jobs/runs/{run_id}" if host else None,
             })
-            continue
-        runs.append({
-            'schema_index': idx,
-            'schema_name': schema_obj.name,
-            'physical_name': schema_obj.physical_name,
-            'run_id': run_id,
-            'monitor_url': f"{host}/jobs/runs/{run_id}" if host else None,
-        })
 
-    # If every submission failed, surface a 500 — partial success is reported
-    # via the failures list so the UI can show which schemas didn't submit.
-    if runs == [] and failures:
-        raise HTTPException(
-            status_code=500,
-            detail=f"All {len(failures)} DQX submissions failed; first error: {failures[0]['error']}",
-        )
+        # If every submission failed, surface a 500 — partial success is reported
+        # via the failures list so the UI can show which schemas didn't submit.
+        if runs == [] and failures:
+            raise HTTPException(
+                status_code=500,
+                detail=f"All {len(failures)} DQX submissions failed; first error: {failures[0]['error']}",
+            )
 
-    return {
-        'workflow_id': 'dqx_contract_validation',
-        'contract_id': contract_id,
-        'ontos_base_url': ontos_base_url,
-        'runs': runs,
-        'failures': failures,
-        # Legacy single-run fields for any pre-existing UI integrations.
-        # When multiple schemas are submitted these reflect the first run.
-        'run_id': runs[0]['run_id'] if runs else None,
-        'monitor_url': runs[0]['monitor_url'] if runs else None,
-    }
+        return {
+            'workflow_id': 'dqx_contract_validation',
+            'contract_id': contract_id,
+            'ontos_base_url': ontos_base_url,
+            'runs': runs,
+            'failures': failures,
+            # Legacy single-run fields for any pre-existing UI integrations.
+            # When multiple schemas are submitted these reflect the first run.
+            'run_id': runs[0]['run_id'] if runs else None,
+            'monitor_url': runs[0]['monitor_url'] if runs else None,
+        }
+    finally:
+        inflight.discard(contract_id)
 
 
 @router.post('/data-contracts/{contract_id}/link-assets', response_model=dict)

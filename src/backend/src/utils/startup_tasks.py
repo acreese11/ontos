@@ -206,6 +206,10 @@ def initialize_managers(app: FastAPI):
         app.state.settings = settings
         logger.info(f"Stored global settings object on app.state.settings: {type(app.state.settings)}")
 
+        # In-flight contract IDs for the DQX-run concurrency guard (data_contracts_routes).
+        # Initialized here so the request path doesn't have to lazily create it.
+        app.state.dqx_inflight = set()
+
         # Instantiate SettingsManager first, passing settings
         app.state.settings_manager = SettingsManager(db=db_session, settings=settings, workspace_client=ws_client)
 
