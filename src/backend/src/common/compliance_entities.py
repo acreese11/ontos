@@ -7,6 +7,7 @@ This module provides a framework for loading and filtering entities
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, Dict, Iterator, List, Optional, Protocol
+from sqlalchemy import func, and_
 from sqlalchemy.orm import Session
 
 from src.common.logging import get_logger
@@ -239,18 +240,56 @@ class AppEntityLoader(EntityLoader):
                 from src.repositories.data_contracts_repository import data_contract_repo
                 contracts = data_contract_repo.get_multi(self.db, skip=0, limit=10000)
                 recent_cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+
+                # Bulk-fetch the latest QualityItem per contract in one query
+                # instead of a per-contract .first() (N+1). Subquery gets
+                # max(measured_at) per entity_id; join back to pull the row.
+                latest_at_subq = (
+                    self.db.query(
+                        QualityItemDb.entity_id.label('entity_id'),
+                        func.max(QualityItemDb.measured_at).label('max_at'),
+                    )
+                    .filter(QualityItemDb.entity_type == 'data_contract')
+                    .group_by(QualityItemDb.entity_id)
+                    .subquery()
+                )
+                latest_rows = (
+                    self.db.query(QualityItemDb)
+                    .join(
+                        latest_at_subq,
+                        and_(
+                            QualityItemDb.entity_id == latest_at_subq.c.entity_id,
+                            QualityItemDb.measured_at == latest_at_subq.c.max_at,
+                        ),
+                    )
+                    .filter(QualityItemDb.entity_type == 'data_contract')
+                    .order_by(QualityItemDb.measured_at.desc(), QualityItemDb.id.desc())
+                    .all()
+                )
+                # On a measured_at tie (e.g. two items inserted in the same
+                # instant), keep the higher id (later insert) deterministically:
+                # rows are newest-first, so setdefault keeps the first seen.
+                latest_by_contract: Dict[str, QualityItemDb] = {}
+                for r in latest_rows:
+                    latest_by_contract.setdefault(r.entity_id, r)
+
+                def _as_aware(dt):
+                    # QualityItemDb.measured_at is TIMESTAMP(timezone=True), but
+                    # whether the driver returns tz-aware or naive varies
+                    # (psycopg2 vs psycopg3 / Lakebase). Comparing naive >= aware
+                    # raises TypeError, which the caller's broad except swallows
+                    # and silently zeroes the compliance score. Normalize to UTC.
+                    if dt is not None and dt.tzinfo is None:
+                        return dt.replace(tzinfo=timezone.utc)
+                    return dt
+
                 for contract in contracts:
                     # Derive enforcement signals from the federated QualityItem
                     # stream so compliance policies can answer "is this contract
                     # actually being enforced by some pipeline?"
-                    latest_q = (
-                        self.db.query(QualityItemDb)
-                        .filter(QualityItemDb.entity_type == 'data_contract')
-                        .filter(QualityItemDb.entity_id == str(contract.id))
-                        .order_by(QualityItemDb.measured_at.desc())
-                        .first()
-                    )
-                    has_recent = bool(latest_q and latest_q.measured_at and latest_q.measured_at >= recent_cutoff)
+                    latest_q = latest_by_contract.get(str(contract.id))
+                    measured_at = _as_aware(latest_q.measured_at) if latest_q else None
+                    has_recent = bool(measured_at and measured_at >= recent_cutoff)
                     yield {
                         'type': 'data_contract',
                         'id': contract.id,
