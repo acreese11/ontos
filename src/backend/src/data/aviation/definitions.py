@@ -222,8 +222,18 @@ def _contract(
             f"DQX 0.14 only reads per-schema quality lists."
         )
 
-    # Derive server connectivity from the first schema (all schemas in a contract
-    # are assumed to live in the same catalog.schema).
+    # Derive server connectivity from the first schema. All schemas in a
+    # contract MUST live in the same catalog.schema, because the single servers
+    # block below is built from schemas[0] — a multi-catalog/schema contract
+    # would silently advertise the wrong catalog for the other tables. Assert
+    # it rather than let it pass silently. (#32)
+    uc_schemas = {".".join(s["physicalName"].split(".")[:2]) for s in schemas}
+    if len(uc_schemas) > 1:
+        raise ValueError(
+            f"Contract '{name}' spans multiple UC schemas {sorted(uc_schemas)}; "
+            f"the servers block is derived from one. Split into separate contracts "
+            f"or align all schemas to one catalog.schema."
+        )
     first_path = schemas[0]["physicalName"]
     catalog, schema_name, _ = first_path.split(".")
     purpose = business_purpose or description
