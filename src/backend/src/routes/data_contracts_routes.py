@@ -2072,11 +2072,16 @@ async def run_dqx_validation(
     # same contract. In-memory is sufficient — Databricks Apps runs a single
     # uvicorn process, and there's no await between the check and the add so the
     # event loop can't interleave them. (review #23)
+    # Normally initialized in startup_tasks; lazily create as a fallback for
+    # paths that don't run startup (e.g. tests). This block and the add below
+    # are await-free, so the event loop cannot interleave the check and the add.
     inflight = getattr(request.app.state, 'dqx_inflight', None)
     if inflight is None:
         inflight = set()
         request.app.state.dqx_inflight = inflight
     if contract_id in inflight:
+        # NB: this 409 raises BEFORE the try below, so it never reaches the
+        # finally — a concurrent caller's inflight entry is never discarded here.
         raise HTTPException(
             status_code=409,
             detail="A DQX validation run for this contract is already in flight.",
