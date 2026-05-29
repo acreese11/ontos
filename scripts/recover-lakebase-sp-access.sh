@@ -54,7 +54,7 @@ if [[ -z "${PG_USER:-}" ]]; then
 fi
 
 TOKEN=$(databricks database generate-database-credential -p "$PROFILE" \
-  --json "$(printf '{"request_id":"recover-%s","instance_names":["%s"]}' "$RANDOM" "$INSTANCE")" \
+  --json "$(printf '{"request_id":"recover-%s-%s","instance_names":["%s"]}' "$(date +%s%N)" "$$" "$INSTANCE")" \
   | python3 -c 'import json,sys;print(json.load(sys.stdin)["token"])')
 
 echo "Re-granting SP access:"
@@ -65,14 +65,33 @@ echo "  sp uuid:  $SP_UUID"
 echo "  pg user:  $PG_USER"
 echo
 
+# Confirmation gate (#24). These GRANTs are run with a one-off generated
+# credential against the live metadata DB — a typo'd SP_UUID would grant the
+# wrong principal. Prompt before executing when run interactively. Skipped
+# automatically when non-interactive (no TTY, e.g. bootstrap-app-permissions.sh
+# delegating to this) or when ASSUME_YES=1.
+if [[ -t 0 && "${ASSUME_YES:-0}" != "1" ]]; then
+  echo "About to GRANT schema access on \"$SCHEMA\" to SP \"$SP_UUID\" on $HOST/$DB."
+  read -r -p "Proceed? [y/N] " _confirm
+  case "$_confirm" in
+    y|Y|yes|YES) ;;
+    *) echo "Aborted."; exit 1 ;;
+  esac
+fi
+
+# Grants are scoped to what the app actually needs to operate (CRUD + sequence
+# usage), NOT GRANT ALL — ALL includes TRUNCATE, which a buggy job could use to
+# wipe the metadata store. Schema-level USAGE+CREATE still lets the app create
+# new tables (it owns the schema); these per-object grants cover tables/sequences
+# it doesn't own (e.g. created before an ownership transfer). (#25)
 PGPASSWORD="$TOKEN" psql \
   "host=$HOST user=$PG_USER dbname=$DB port=5432 sslmode=require" \
   -v ON_ERROR_STOP=1 -At <<SQL
 GRANT USAGE, CREATE ON SCHEMA "$SCHEMA" TO "$SP_UUID";
-GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA "$SCHEMA" TO "$SP_UUID";
-GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA "$SCHEMA" TO "$SP_UUID";
-ALTER DEFAULT PRIVILEGES IN SCHEMA "$SCHEMA" GRANT ALL ON TABLES TO "$SP_UUID";
-ALTER DEFAULT PRIVILEGES IN SCHEMA "$SCHEMA" GRANT ALL ON SEQUENCES TO "$SP_UUID";
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA "$SCHEMA" TO "$SP_UUID";
+GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA "$SCHEMA" TO "$SP_UUID";
+ALTER DEFAULT PRIVILEGES IN SCHEMA "$SCHEMA" GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO "$SP_UUID";
+ALTER DEFAULT PRIVILEGES IN SCHEMA "$SCHEMA" GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO "$SP_UUID";
 SELECT 'after: SP USAGE+CREATE = ' || has_schema_privilege('$SP_UUID', '$SCHEMA', 'USAGE,CREATE');
 SQL
 

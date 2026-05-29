@@ -107,15 +107,39 @@ printf '  app SP internal id: %s\n' "$SP_INTERNAL_ID"
 # Apps proxy before reaching the app.
 # ---------------------------------------------------------------------------
 log "Step 1: grant SP CAN_USE on the app"
-databricks apps update-permissions "$APP_NAME" -p "$PROFILE" --json "$(cat <<JSON
-{
-  "access_control_list": [
-    {"service_principal_name": "$SP_UUID", "permission_level": "CAN_USE"}
-  ]
-}
-JSON
-)" > /dev/null
-echo "  ok — SP has CAN_USE on $APP_NAME"
+# Merge into the existing ACL rather than submitting only our entry. Read the
+# current permissions, add the SP's CAN_USE if absent, and write back the union
+# — so this step never drops other grantees regardless of whether the CLI's
+# update-permissions PATCH-merges or full-replaces. (#31)
+CURRENT_ACL=$(databricks apps get-permissions "$APP_NAME" -p "$PROFILE" -o json 2>/dev/null || echo '{}')
+MERGED_ACL=$(printf '%s' "$CURRENT_ACL" | SP_UUID="$SP_UUID" python3 -c '
+import json, os, sys
+sp = os.environ["SP_UUID"]
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    data = {}
+acl = []
+for entry in (data.get("access_control_list") or []):
+    # Preserve existing entries, but skip a stale entry for our SP (re-added below).
+    if entry.get("service_principal_name") == sp:
+        continue
+    perms = entry.get("all_permissions") or []
+    levels = [p.get("permission_level") for p in perms if not p.get("inherited") and p.get("permission_level")]
+    for lvl in (levels or [entry.get("permission_level")]):
+        if not lvl:
+            continue
+        out = {"permission_level": lvl}
+        for k in ("user_name", "group_name", "service_principal_name"):
+            if entry.get(k):
+                out[k] = entry[k]
+        if len(out) > 1:
+            acl.append(out)
+acl.append({"service_principal_name": sp, "permission_level": "CAN_USE"})
+print(json.dumps({"access_control_list": acl}))
+')
+databricks apps update-permissions "$APP_NAME" -p "$PROFILE" --json "$MERGED_ACL" > /dev/null
+echo "  ok — SP has CAN_USE on $APP_NAME (merged into existing ACL)"
 
 # ---------------------------------------------------------------------------
 # Step 2 — Workspace group membership (Ontos role binding).
