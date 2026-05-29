@@ -54,7 +54,7 @@ if [[ -z "${PG_USER:-}" ]]; then
 fi
 
 TOKEN=$(databricks database generate-database-credential -p "$PROFILE" \
-  --json "$(printf '{"request_id":"recover-%s-%s","instance_names":["%s"]}' "$(date +%s%N)" "$$" "$INSTANCE")" \
+  --json "$(printf '{"request_id":"recover-%s-%s","instance_names":["%s"]}' "$(uuidgen 2>/dev/null || date +%s)" "$$" "$INSTANCE")" \
   | python3 -c 'import json,sys;print(json.load(sys.stdin)["token"])')
 
 echo "Re-granting SP access:"
@@ -72,7 +72,9 @@ echo
 # delegating to this) or when ASSUME_YES=1.
 if [[ -t 0 && "${ASSUME_YES:-0}" != "1" ]]; then
   echo "About to GRANT schema access on \"$SCHEMA\" to SP \"$SP_UUID\" on $HOST/$DB."
-  read -r -p "Proceed? [y/N] " _confirm
+  # `|| true` so an EOF (Ctrl-D) doesn't trip `set -e` before the case runs;
+  # empty/EOF falls through to the default branch and aborts cleanly.
+  read -r -p "Proceed? [y/N] " _confirm || true
   case "$_confirm" in
     y|Y|yes|YES) ;;
     *) echo "Aborted."; exit 1 ;;

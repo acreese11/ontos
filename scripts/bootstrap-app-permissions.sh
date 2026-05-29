@@ -125,10 +125,14 @@ for entry in (data.get("access_control_list") or []):
     if entry.get("service_principal_name") == sp:
         continue
     perms = entry.get("all_permissions") or []
+    # Only DIRECT permission levels can be resubmitted. Inherited grants
+    # (workspace-level defaults) are re-asserted by the platform regardless and
+    # the update API rejects them if submitted — so an inherited-only entry is
+    # correctly omitted from the PUT (it persists via inheritance anyway).
     levels = [p.get("permission_level") for p in perms if not p.get("inherited") and p.get("permission_level")]
-    for lvl in (levels or [entry.get("permission_level")]):
-        if not lvl:
-            continue
+    if not levels:
+        continue
+    for lvl in levels:
         out = {"permission_level": lvl}
         for k in ("user_name", "group_name", "service_principal_name"):
             if entry.get(k):
@@ -294,7 +298,9 @@ if [[ "$SKIP_LAKEBASE" == "1" ]]; then
 else
   log "Step 5: Lakebase schema access for SP (delegated)"
   HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  PROFILE="$PROFILE" INSTANCE="$INSTANCE" SP_UUID="$SP_UUID" SCHEMA="$SCHEMA" \
+  # ASSUME_YES=1 so the delegated recover script doesn't prompt — bootstrap is
+  # the "run once, done" path and the operator already consented by running it.
+  PROFILE="$PROFILE" INSTANCE="$INSTANCE" SP_UUID="$SP_UUID" SCHEMA="$SCHEMA" ASSUME_YES=1 \
     "$HERE/recover-lakebase-sp-access.sh"
 fi
 
