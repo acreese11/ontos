@@ -61,10 +61,11 @@ def _ensure_owner_in_team(db: Session, db_obj: DataProductDb) -> None:
 
     # Resolve the referenced Team directly via the ORM model rather than
     # importing the teams *repository* (repo→repo import was a layering smell
-    # and an import-graph risk). A bad/UUID-malformed id just leaves state alone.
+    # and an import-graph risk). Use Session.get (Query.get() is removed in
+    # SQLAlchemy 2.0) with a STRING id — TeamDb.id is Column(String), so a UUID
+    # object would miss the PK. A bad id just leaves state alone.
     try:
-        from uuid import UUID
-        owner_team = db.query(TeamDb).get(UUID(str(db_obj.owner_team_id)))
+        owner_team = db.get(TeamDb, str(db_obj.owner_team_id))
     except Exception:
         owner_team = None
     if not owner_team or not owner_team.name:
