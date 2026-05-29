@@ -11,7 +11,7 @@ from typing import Iterable, List, Optional, Any, Dict, Set, Union
 import json
 
 from src.common.repository import CRUDBase
-from src.repositories.teams_repository import team_repo as _team_repo
+from src.db_models.teams import TeamDb
 from src.models.data_products import (
     DataProduct as DataProductApi,
     DataProductCreate,
@@ -59,28 +59,43 @@ def _ensure_owner_in_team(db: Session, db_obj: DataProductDb) -> None:
     if not getattr(db_obj, "owner_team_id", None):
         return
 
-    # Look up the Team entity Ontos is referencing. If we can't resolve, leave alone.
+    # Resolve the referenced Team directly via the ORM model rather than
+    # importing the teams *repository* (repo→repo import was a layering smell
+    # and an import-graph risk). A bad/UUID-malformed id just leaves state alone.
     try:
         from uuid import UUID
-        owner_team = _team_repo.get(db, id=UUID(str(db_obj.owner_team_id)))
+        owner_team = db.query(TeamDb).get(UUID(str(db_obj.owner_team_id)))
     except Exception:
         owner_team = None
     if not owner_team or not owner_team.name:
         return
 
     team_name = owner_team.name
-    # If the product already has a team body with an owner member, we're done.
+    _MATERIALIZED_DESC = "Owner (materialized from owner_team_id reference)"
+
+    # Update-or-create. If a materialized owner member already exists, refresh
+    # its name to the current team_name so a team rename propagates (previously
+    # the guard returned early on any owner member → stale name forever). A
+    # user-authored owner member (different description) is left untouched.
     existing_team = getattr(db_obj, "team", None)
     if existing_team and existing_team.members:
         for m in existing_team.members:
-            if (m.role or "").lower() == "owner":
+            if (m.role or "").lower() != "owner":
+                continue
+            if (m.description or "") == _MATERIALIZED_DESC:
+                # Ours — keep it in sync with the (possibly renamed) team.
+                if m.name != team_name or m.username != team_name:
+                    m.name = team_name
+                    m.username = team_name
                 return
+            # User-authored owner member — don't clobber.
+            return
 
     synthesized = DataProductTeamMemberDb(
         username=team_name,
         name=team_name,
         role="owner",
-        description="Owner (materialized from owner_team_id reference)",
+        description=_MATERIALIZED_DESC,
     )
     if existing_team:
         existing_team.members.append(synthesized)
