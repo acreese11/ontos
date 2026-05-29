@@ -7,6 +7,7 @@ This module provides a framework for loading and filtering entities
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, Dict, Iterator, List, Optional, Protocol
+from sqlalchemy import func, and_
 from sqlalchemy.orm import Session
 
 from src.common.logging import get_logger
@@ -235,7 +236,6 @@ class AppEntityLoader(EntityLoader):
             # Data Contracts
             if 'data_contract' in entity_types:
                 from datetime import datetime, timedelta, timezone
-                from sqlalchemy import func, and_
                 from src.db_models.quality import QualityItemDb
                 from src.repositories.data_contracts_repository import data_contract_repo
                 contracts = data_contract_repo.get_multi(self.db, skip=0, limit=10000)
@@ -263,9 +263,15 @@ class AppEntityLoader(EntityLoader):
                         ),
                     )
                     .filter(QualityItemDb.entity_type == 'data_contract')
+                    .order_by(QualityItemDb.measured_at.desc(), QualityItemDb.id.desc())
                     .all()
                 )
-                latest_by_contract = {r.entity_id: r for r in latest_rows}
+                # On a measured_at tie (e.g. two items inserted in the same
+                # instant), keep the higher id (later insert) deterministically:
+                # rows are newest-first, so setdefault keeps the first seen.
+                latest_by_contract: Dict[str, QualityItemDb] = {}
+                for r in latest_rows:
+                    latest_by_contract.setdefault(r.entity_id, r)
 
                 def _as_aware(dt):
                     # QualityItemDb.measured_at is TIMESTAMP(timezone=True), but
