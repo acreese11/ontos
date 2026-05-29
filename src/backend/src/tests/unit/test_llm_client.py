@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.common.llm_client import create_openai_client
+from src.common.llm_client import create_openai_client, chat_completion
 
 
 def _make_settings(**overrides):
@@ -59,3 +59,58 @@ class TestCreateOpenaiClient:
 
         with pytest.raises(RuntimeError, match="LLM_BASE_URL"):
             create_openai_client(settings)
+
+
+_TEMP_400 = (
+    "Error code: 400 - BAD_REQUEST: Model us.anthropic.claude-opus-4-7 "
+    "does not support the temperature parameter."
+)
+
+
+def _client(create_fn):
+    """Build a fake OpenAI client whose chat.completions.create == create_fn."""
+    client = MagicMock()
+    client.chat.completions.create.side_effect = create_fn
+    return client
+
+
+class TestChatCompletion:
+    def test_retries_without_temperature_on_unsupported(self):
+        calls = []
+
+        def create(**kwargs):
+            calls.append(dict(kwargs))
+            if "temperature" in kwargs:
+                raise Exception(_TEMP_400)
+            return {"ok": True}
+
+        out = chat_completion(_client(create), model="x", messages=[], temperature=0.2)
+        assert out == {"ok": True}
+        assert len(calls) == 2
+        assert "temperature" not in calls[-1]
+
+    def test_passes_through_when_accepted(self):
+        calls = []
+
+        def create(**kwargs):
+            calls.append(dict(kwargs))
+            return {"ok": True}
+
+        chat_completion(_client(create), model="x", messages=[], temperature=0.2)
+        assert len(calls) == 1  # no retry
+
+    def test_unrelated_error_propagates(self):
+        def create(**kwargs):
+            raise Exception("Error code: 500 - internal")
+
+        with pytest.raises(Exception, match="internal"):
+            chat_completion(_client(create), model="x", messages=[], temperature=0.2)
+
+    def test_no_temperature_kwarg_means_no_retry(self):
+        # A temperature-rejection error must NOT be swallowed if the caller
+        # never sent temperature (would mask a real, different problem).
+        def create(**kwargs):
+            raise Exception(_TEMP_400)
+
+        with pytest.raises(Exception, match="temperature"):
+            chat_completion(_client(create), model="x", messages=[])

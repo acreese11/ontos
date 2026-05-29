@@ -22,7 +22,7 @@ from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.sql import StatementState
 
 from src.common.config import Settings
-from src.common.llm_client import create_openai_client
+from src.common.llm_client import create_openai_client, chat_completion
 from src.common.logging import get_logger
 
 logger = get_logger(__name__)
@@ -432,7 +432,8 @@ class ContractGeneratorManager:
         endpoint = self.settings.LLM_ENDPOINT
         if not endpoint:
             raise RuntimeError("LLM_ENDPOINT is not configured")
-        completion = client.chat.completions.create(
+        completion = chat_completion(
+            client,
             model=endpoint,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},

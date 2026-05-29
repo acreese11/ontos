@@ -102,3 +102,25 @@ def create_openai_client(
     logger.info("Creating OpenAI client — base_url=%s, auth=%s", base_url, token_source)
 
     return OpenAI(api_key=token, base_url=base_url)
+
+
+def chat_completion(client: OpenAI, **kwargs):
+    """Call chat.completions.create, tolerating endpoints that reject params.
+
+    Databricks-hosted Claude reasoning models (e.g. databricks-claude-opus-4-7,
+    which proxies to Bedrock us.anthropic.claude-opus-4-x) reject the
+    ``temperature`` parameter with a 400 BAD_REQUEST. Other endpoints accept it.
+    Rather than force every caller to know which endpoint they're on, pass
+    ``temperature`` optimistically and retry once without it when the endpoint
+    says it's unsupported. Keeps low-temp determinism where available, degrades
+    gracefully where not.
+    """
+    try:
+        return client.chat.completions.create(**kwargs)
+    except Exception as e:
+        msg = str(e)
+        if "temperature" in kwargs and "temperature" in msg and "support" in msg.lower():
+            logger.info("Endpoint rejected 'temperature'; retrying without it.")
+            kwargs.pop("temperature", None)
+            return client.chat.completions.create(**kwargs)
+        raise

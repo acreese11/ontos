@@ -462,7 +462,10 @@ class OntologyGeneratorManager:
                     kwargs["tools"] = send_tools
                     kwargs["tool_choice"] = "auto"
 
-                response = client.chat.completions.create(**kwargs)
+                # chat_completion retries without `temperature` if the endpoint
+                # rejects it (databricks-claude-opus-4-x).
+                from src.common.llm_client import chat_completion
+                response = chat_completion(client, **kwargs)
             except Exception as exc:
                 exc_str = str(exc)
                 # If the endpoint rejected tools, fall back to direct mode
@@ -471,7 +474,9 @@ class OntologyGeneratorManager:
                     tools_supported = False
                     notify("Endpoint does not support tools — using direct generation…")
                     try:
-                        response = client.chat.completions.create(
+                        from src.common.llm_client import chat_completion
+                        response = chat_completion(
+                            client,
                             model=endpoint,
                             messages=messages,
                             max_tokens=4096,
