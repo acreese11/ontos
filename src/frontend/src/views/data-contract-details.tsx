@@ -4,12 +4,14 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import { AlertCircle, Download, Pencil, Trash2, Loader2, ArrowLeft, FileText, KeyRound, CopyPlus, Plus, Shapes, Columns2, Database, Sparkles, Package, ChevronLeft, ChevronRight, ShieldCheck, Globe, Link2, PlayCircle } from 'lucide-react'
+import { AlertCircle, Download, Pencil, Trash2, Loader2, ArrowLeft, FileText, KeyRound, CopyPlus, Plus, Shapes, Columns2, Database, Sparkles, Package, ChevronLeft, ChevronRight, ShieldCheck, Globe, Link2, PlayCircle, Eye, ChevronDown, Copy } from 'lucide-react'
 import { DetailViewSkeleton } from '@/components/common/list-view-skeleton'
 import { Badge } from '@/components/ui/badge'
 import { Label } from '@/components/ui/label'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
 import { DataTable } from '@/components/ui/data-table'
 import { ColumnDef } from '@tanstack/react-table'
 import { useToast } from '@/hooks/use-toast'
@@ -816,6 +818,9 @@ export default function DataContractDetails() {
   }
 
   const [runningDqx, setRunningDqx] = useState(false)
+  const [odcsViewOpen, setOdcsViewOpen] = useState(false)
+  const [odcsYaml, setOdcsYaml] = useState('')
+  const [odcsViewLoading, setOdcsViewLoading] = useState(false)
 
   const runDqxValidation = async () => {
     if (!contractId || !contract) return
@@ -863,6 +868,29 @@ export default function DataContractDetails() {
       toast({ title: 'DQX validation failed', description: e instanceof Error ? e.message : 'Unable to submit run', variant: 'destructive' })
     } finally {
       setRunningDqx(false)
+    }
+  }
+
+  // "View ODCS" uses /odcs/export — NOT the machine-pull endpoints /odcs.yaml or
+  // /odcs.json. Those are deliberately gated to PUBLISHED contracts (status active|
+  // approved) and return 404 on drafts/proposed/etc. — they exist for federated
+  // quality pipelines and agents (DQX, dbt+GE, …), not the authoring UI. This button
+  // is author-facing and must work on in-progress drafts, so it uses /odcs/export,
+  // which is intentionally NOT status-gated. See data_contracts_routes.py
+  // (_PULLABLE_CONTRACT_STATUSES / _assert_pullable) for the gating rationale.
+  const viewOdcs = async () => {
+    if (!contractId) return
+    setOdcsViewOpen(true)
+    setOdcsViewLoading(true)
+    try {
+      const res = await fetch(`/api/data-contracts/${contractId}/odcs/export`)
+      if (!res.ok) throw new Error('Failed to load ODCS')
+      setOdcsYaml(await res.text())
+    } catch (e) {
+      setOdcsYaml('')
+      toast({ title: 'Unable to load ODCS', description: e instanceof Error ? e.message : 'Error', variant: 'destructive' })
+    } finally {
+      setOdcsViewLoading(false)
     }
   }
 
@@ -1885,7 +1913,17 @@ export default function DataContractDetails() {
             }
             Run DQX
           </Button>
-          <Button variant="outline" onClick={exportOdcs} size="sm"><Download className="mr-2 h-4 w-4" /> Export ODCS</Button>
+          {/* modal={false}: opening the View Dialog from a Radix DropdownMenu otherwise leaves
+              pointer-events:none on <body> after the dialog closes, making the toolbar unclickable. */}
+          <DropdownMenu modal={false}>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm"><FileText className="mr-2 h-4 w-4" /> View / Export ODCS <ChevronDown className="ml-2 h-4 w-4" /></Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={viewOdcs}><Eye className="mr-2 h-4 w-4" /> View ODCS</DropdownMenuItem>
+              <DropdownMenuItem onClick={exportOdcs}><Download className="mr-2 h-4 w-4" /> Export ODCS (.yaml)</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           {canEditInPlace && (
             <Button variant="destructive" onClick={handleDelete} size="sm"><Trash2 className="mr-2 h-4 w-4" /> Delete</Button>
           )}
@@ -3216,6 +3254,24 @@ export default function DataContractDetails() {
       )}
 
       {/* Dialogs */}
+      <Dialog open={odcsViewOpen} onOpenChange={setOdcsViewOpen}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>ODCS Contract</DialogTitle>
+            <DialogDescription>Open Data Contract Standard (ODCS) YAML for this contract.</DialogDescription>
+          </DialogHeader>
+          {odcsViewLoading ? (
+            <div className="flex items-center justify-center py-8"><Loader2 className="h-5 w-5 animate-spin" /></div>
+          ) : (
+            <pre className="max-h-[60vh] overflow-auto rounded-md bg-muted p-4 text-xs font-mono whitespace-pre">{odcsYaml}</pre>
+          )}
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => { navigator.clipboard.writeText(odcsYaml); toast({ title: 'Copied', description: 'ODCS YAML copied to clipboard' }) }} disabled={!odcsYaml}><Copy className="mr-2 h-4 w-4" /> Copy</Button>
+            <Button variant="outline" size="sm" onClick={exportOdcs}><Download className="mr-2 h-4 w-4" /> Download</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <DataContractBasicFormDialog
         isOpen={isBasicFormOpen}
         onOpenChange={setIsBasicFormOpen}
