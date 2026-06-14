@@ -55,9 +55,8 @@ the *interface* for Generate, the *consumer* of Enforce results, and the
 | [1](demo-1-ai-contract-generation.md) | AI contract generation | ✅ ready |
 | [2](demo-2-marketplace-subscribe.md) | Marketplace + subscribe | ⚠️ seed subscriptions first |
 | [3](demo-3-dqx-quarantine.md) | DQX quarantine | ✅ ready |
-| [4](demo-4-notification-loop.md) | Notify owner + subscribers | ❌ not built yet |
-| [5](demo-5-genie-trust-signals.md) | Genie w/ trust signals | ⚠️ unverified (likely API drift) |
-| [6](demo-6-lakehouse-monitor-drift.md) | Lakehouse Monitor drift | ❌ not built (cut candidate) |
+| [5](demo-5-genie-trust-signals.md) | Genie w/ trust signals | 🔴 **LIKELY CUT** — leaning toward cutting Genie (also ⚠️ unverified, likely API drift) |
+| [Maintain](demo-maintain.md) | Contract Coverage (+ notify loop, drift) | ✅ Coverage built + validated; notify loop ❌ not built; drift ❌ not built (cut candidate) |
 
 See `../plans/dais-demo-readiness.md` for the full rehearsal findings.
 
@@ -65,25 +64,32 @@ See `../plans/dais-demo-readiness.md` for the full rehearsal findings.
 
 **Slot: 40 minutes**, co-presented (Alan + Michael), 2 min reserved for Q&A.
 Demos are pre-recorded videos, narrated live, in two clusters:
-- Slides 16–18 → Demos **1, 2, 4**
-- Slides 21–23 → Demos **3, 6, 5**
+- Slides 16–18 → Demos **1, 2, Maintain·notify-loop**
+- Slides 21–23 → Demos **3, Maintain·drift, 5**
+
+(The Maintain beats — notify loop and drift — live in `demo-maintain.md`,
+anchored by the built Contract Coverage spine.)
 
 | Demo | Slide | Allocated | Fits? |
 |------|-------|-----------|-------|
 | 1 contract gen | 16 | ~5:00 | ✅ if scripted tight + LLM output pinned |
 | 2 marketplace | 17 | ~2:00 | ✅ |
-| 4 notify loop | 18 | ~2:00 | ✅ *budget* — but ❌ not built |
+| Maintain · notify loop | 18 | ~2:00 | ✅ *budget* — but ❌ not built |
 | 3 DQX quarantine | 21 | ~2:00 | ✅ |
-| 6 monitor drift | 22 | ~2:30 | ❌ not built (cut candidate) |
-| 5 Genie | 23 | ~2:00 | ⚠️ if verified |
+| Maintain · monitor drift | 22 | ~2:30 | ❌ not built (cut candidate) |
+| 5 Genie | 23 | ~2:00 | 🔴 likely cut (⚠️ if kept + verified) |
 | **Total video** | | **~15.5 min** | **≈39% of the 40-min talk** |
+
+> The Maintain beats (Contract Coverage, notification loop, drift) are consolidated
+> in [`demo-maintain.md`](demo-maintain.md). Contract Coverage is the built spine;
+> the notify-loop and drift rows above are the unbuilt beats folded into that file.
 
 **Per-demo budgets are appropriate** — each beat fits its slot (see the timing
 table in each script). **The structural risk is the aggregate:** 15.5 min of
 video is a high share of a 40-min co-presented slot, and live co-narration over
 video tends to drift long.
 
-**Recommended adjustment — cut Demo 6 (Monitor, 2.5 min):**
+**Recommended adjustment — cut the Maintain drift beat (Monitor, 2.5 min):**
 - It's the **biggest unbuilt beat** (least likely to be ready) *and* the
   **second-longest video**. Cutting drops demo video to **~13 min (~33%)** — a
   healthier ratio — and removes the largest build risk.
@@ -91,8 +97,8 @@ video tends to drift long.
   verbally in ~20–30s. The concept lands without the video.
 - This single cut fixes both the timing share *and* the readiness gap at once.
 
-**Then prioritize the build runway on Demo 4 > Demo 5:** Demo 4 (trust loop) is
-the most differentiated beat and worth building; Demo 5 (Genie) is a smaller
-shape-fix on an endpoint that already exists. Both fit their 2-min budgets once
-working.
+**Then prioritize the build runway on the Maintain notify-loop > Demo 5:** the
+notify-loop (trust loop) is the most differentiated beat and worth building;
+Demo 5 (Genie) is a smaller shape-fix on an endpoint that already exists — and is
+now leaning toward a cut. Both fit their 2-min budgets once working.
 
