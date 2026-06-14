@@ -884,7 +884,7 @@ export default function DataContractDetails() {
     setOdcsViewLoading(true)
     try {
       const res = await fetch(`/api/data-contracts/${contractId}/odcs/export`)
-      if (!res.ok) throw new Error('Failed to load ODCS')
+      if (!res.ok) throw new Error(`Failed to load ODCS (HTTP ${res.status})`)
       setOdcsYaml(await res.text())
     } catch (e) {
       setOdcsYaml('')
@@ -3266,7 +3266,7 @@ export default function DataContractDetails() {
             <pre className="max-h-[60vh] overflow-auto rounded-md bg-muted p-4 text-xs font-mono whitespace-pre">{odcsYaml}</pre>
           )}
           <DialogFooter>
-            <Button variant="outline" size="sm" onClick={() => { navigator.clipboard.writeText(odcsYaml); toast({ title: 'Copied', description: 'ODCS YAML copied to clipboard' }) }} disabled={!odcsYaml}><Copy className="mr-2 h-4 w-4" /> Copy</Button>
+            <Button variant="outline" size="sm" onClick={async () => { try { await navigator.clipboard.writeText(odcsYaml); toast({ title: 'Copied', description: 'ODCS YAML copied to clipboard' }) } catch { toast({ title: 'Copy failed', description: 'Could not copy to clipboard', variant: 'destructive' }) } }} disabled={!odcsYaml}><Copy className="mr-2 h-4 w-4" /> Copy</Button>
             <Button variant="outline" size="sm" onClick={exportOdcs}><Download className="mr-2 h-4 w-4" /> Download</Button>
           </DialogFooter>
         </DialogContent>
