@@ -3,8 +3,8 @@
 > **Deck slide 16** (deck's internal label: "Demo 3 — Bad Data Stops at the Gate");
 > context slide **15** = "DQX in 2026 — What Shipped". The **Enforce** move in the
 > lifecycle. **Slot: ~5:00** = live co-narration over a ~2–3 min video.
-> **Narration:** Alan leads (technical pattern); Michael adds operational impact.
-> (Per deck agenda "Demo: Enforce — Alan — 5 min" + slide-16 co-narration note.)
+> **Narration: Alan owns it** end to end; Michael throws in one domain question
+> (the [Michael Q] beat) and lets Alan tie it back. (Per Alan, 2026-06-14.)
 
 **Readiness: ✅ READY.** Verified live on `dais-aws`: DQX on `live_flights` /
 `safe_skies.flight_ops.adsb_v2` generated **11 rules, 6 of them the contract's own
@@ -42,7 +42,7 @@ fails to land in Gold; the pipeline doesn't crash; on-call doesn't page at 2am.
 | 3 · Run DQX → results | Alan | 0:45 |
 | 4 · The quarantine table + a bad row | Alan | 0:45 |
 | 5 · Results write back → the trust signal | Alan | 0:30 |
-| 6 · Operational impact | Michael | 0:40 |
+| 6 · Operational impact | Michael Q → Alan | 0:40 |
 | 7 · Button back to the lifecycle | Alan | 0:20 |
 
 > **Realism:** this genuinely earns ~4:30–5:00 **because** of beats 2 and 5 (the
@@ -91,12 +91,14 @@ fails to land in Gold; the pipeline doesn't crash; on-call doesn't page at 2am.
   timestamp. Remember that 'last quality check' — it becomes a visible trust signal
   the moment a consumer goes looking for this product. Which is the next demo."
 
-**Beat 6 — Operational impact** · *Michael takes it.*
-- **[SAY · Michael]** "In our world: a malformed transponder code doesn't silently
-  corrupt a fleet-availability dashboard. A negative altitude doesn't quietly skew a
-  maintenance trend an engineer is reading. It's caught at the gate, isolated, and
-  flagged — and nobody gets paged at 2am to reverse-engineer which row poisoned the
-  table."
+**Beat 6 — Operational impact** · *Michael throws in the domain question; Alan answers.*
+- **[Michael Q]** "So on our side — what does that actually prevent?"
+- **[SAY · Alan]** "Concretely: a malformed transponder code doesn't silently corrupt
+  a fleet-availability dashboard. A negative altitude doesn't quietly skew a
+  maintenance trend an engineer is reading. The bad row is caught at the gate,
+  isolated, and flagged — and nobody gets paged at 2am to reverse-engineer which row
+  poisoned the table." *(Michael can validate with a one-liner from the operator's
+  seat — but Alan owns the narration.)*
 
 **Beat 7 — Button** · *Alan.*
 - **[SAY · Alan]** "Bad data failed at the gate, not at the dashboard. So now the

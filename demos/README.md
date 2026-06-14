@@ -66,15 +66,16 @@ pre-recorded videos, narrated live, in **lifecycle order: 1 Author → 2 Enforce
 Discover → 4 Maintain**. (Reconcile the deck's slide order to match this flow.)
 
 The deck agenda (slide 5 speaker notes) is the reconciled source: **4 demos, ~5 min
-each**, lifecycle order, Author/Enforce led by **Alan**, Discover/Maintain led by
-**Michael**. A "5-min slot" is **live co-narration over a ~2–3 min pre-recorded
-video** — the narration fills the slot, not the video runtime.
+each**, lifecycle order. **Single narrator per demo** (the other throws in a question):
+**Alan** owns Author + Enforce; **Michael** owns Discover + Maintain. A "5-min slot"
+is **live narration over a ~2–3 min pre-recorded video** — narration fills the slot,
+not the video runtime.
 
 | Demo | Slot | Video | Notes |
 |------|------|-------|-------|
 | 1 · Author (Alan) | ~5:00 | ~5 min | The showpiece — genuinely earns 5. |
-| 2 · Enforce (Alan + Michael ops) | ~5:00 | ~2–3 min | Earns ~4:30–5:00 with the native-ODCS + write-back beats. |
-| 3 · Discover (Michael + Alan arch) | ~5:00 | ~2–3 min | Thinnest — realistically ~3:30; give the slack back if it drags. |
+| 2 · Enforce (Alan; Michael Q) | ~5:00 | ~2–3 min | Earns ~4:30–5:00 with the native-ODCS + write-back beats. |
+| 3 · Discover (Michael; Alan Q) | ~5:00 | ~2–3 min | Thinnest — realistically ~3:30; give the slack back if it drags. |
 | 4 · Maintain (Michael) | ~5:00 | ~2–3 min | Coverage built; notify loop + drift ❌ not built. |
 | **Total stage time** | **~20 min** | | **≈50% of the 40-min talk — demo-heavy by design (field report).** |
 
@@ -84,15 +85,15 @@ video** — the narration fills the slot, not the video runtime.
 
 **Realism call:** the agenda's "5 each" is a round-number budget. Author earns 5;
 Enforce ~4:30; Discover ~3:30; Maintain depends on what's built. Don't pad to 5 with
-clicks — co-narration (Alan + Michael trading, callbacks to the lifecycle slide) is
-what fills the slot honestly.
+clicks — narration plus the cross-demo callbacks (the lifecycle slide, Enforce→Discover
+trust-signal handoff) is what fills the slot honestly.
 
 **Build runway, if pursuing the unbuilt Maintain beats:** the **notify-loop (trust loop)**
 is the most differentiated and worth building first; the **drift beat** is the largest
 build and the cut candidate — keep its slide (deck slide 21) as a static talking point
 (~20–30s verbal) rather than a video if it isn't ready.
 
-**Deck note:** the Genie slide (deck slide 22, "Demo 5 — Trusted Genie Answers") is
-still physically in the deck but is **not in the agenda's demo lineup** — consistent
-with the decision to cut the Genie demo. Decide whether to keep it as a ~30s static
-payoff slide or remove it.
+**Deck note (Genie cut — decided 2026-06-14):** the Genie demo is cut. The Genie slide
+(deck slide 22, "Demo 5 — Trusted Genie Answers") should be **removed from the deck**.
+It's already out of the agenda's demo lineup; this just makes the deck match. (Deck
+edit is Alan's to make — noted here as the recommendation, not done in this repo.)

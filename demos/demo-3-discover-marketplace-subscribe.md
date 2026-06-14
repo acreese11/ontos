@@ -3,8 +3,8 @@
 > **Deck slide 18** (deck's internal label: "Demo 2 — A Data Marketplace for
 > Business Users"). The **Discover** move in the lifecycle. **Slot: ~5:00** = live
 > co-narration over a ~2–3 min video.
-> **Narration:** Michael leads (business-user experience); Alan takes the
-> architecture/ontology beat. (Per deck agenda "Demo: Discovery — Michael — 5 min".)
+> **Narration: Michael owns it** end to end; Alan throws in the architecture/ontology
+> color as brief interjections (the [Alan Q] beats), then hands back. (Per Alan, 2026-06-14.)
 
 **Readiness: ⚠️ WORKABLE — seed (or live-subscribe) a subscription.** Marketplace is
 populated (47 products incl. 🎯 Global Flight Ops); `/subscribe` + `/subscribers`
@@ -39,11 +39,11 @@ you trust it.
 |---|---|---|
 | 0 · Callback to the lifecycle slide | Michael | 0:30 |
 | 1 · The problem — search, don't grep table names | Michael | 0:40 |
-| 2 · The product card + trust signals | Michael | 0:40 |
-| 3 · Inspect before you trust (the contract/schema) | Michael→Alan | 0:50 |
+| 2 · The product card + trust signals | Michael (Alan half-beat) | 0:40 |
+| 3 · Inspect before you trust (the contract/schema) | Michael (Alan Q) | 0:50 |
 | 4 · Subscribe | Michael | 0:40 |
-| 5 · What a subscription *means* (architecture) | Alan | 0:40 |
-| 6 · Ontology beat (one breath) | Alan | 0:30 |
+| 5 · What a subscription *means* (architecture) | Alan interjection → Michael | 0:40 |
+| 6 · Ontology beat (one breath) | Alan interjection | 0:30 |
 | 7 · Button to Maintain | Michael | 0:20 |
 
 > **Realism:** Discover is the **thinnest** of the four for a full 5 min — search +
@@ -78,9 +78,9 @@ you trust it.
 - **[SAY · Michael]** "And they don't have to take 'certified' on faith." **[DO]**
   open the product, drill into the backing contract. **[SEE]** the ODCS contract:
   schema, the output port(s), the quality expectations.
-- **[SAY · Alan]** "This is the same machine-readable contract the producer authored
-  and DQX enforces — the consumer reads the *exact* agreement. No 'let me find the
-  right person on the data team.' The contract is the documentation."
+- **[Alan, brief interjection]** "And it's the same machine-readable contract the
+  producer authored and DQX enforces — the consumer reads the *exact* agreement. The
+  contract *is* the documentation." → *Michael takes it back.*
 
 **Beat 4 — Subscribe** · *[DO] click Subscribe.*
 - **[SAY · Michael]** "They subscribe to the *product*." **[SEE]** subscription
@@ -88,18 +88,18 @@ you trust it.
 - **[SAY · Michael]** "That does two things: it locks them to this contract version,
   and it registers them for violation notifications."
 
-**Beat 5 — What a subscription means** · *Alan.*
+**Beat 5 — What a subscription means** · *Michael cues Alan ("say what that actually wires up") → Alan keeps it tight → hands back.*
 - **[SAY · Alan]** "Architecturally, that subscription is the thing federation breaks
   and contracts repair. It's an explicit producer → product → consumer link in Ontos.
   Version-locking means a breaking change upstream can't silently reach them. And the
   notification registration is what closes the trust loop — which you'll see fire in
   the last demo."
 
-**Beat 6 — Ontology beat** · *Alan, one breath — do not pivot into an ontology tour.*
+**Beat 6 — Ontology beat** · *Alan interjection, one breath — do not pivot into an ontology tour; hand back to Michael.*
 - **[SAY · Alan]** "And under the hood this isn't one table. Ontos composes
   `table_adsb_v2` and `table_oag_clean` into the single logical product *Global Flight
   Ops* through the ontology. Discoverability is the value; the ontology is the
-  capability underneath it."
+  capability underneath it." → *back to Michael.*
 
 **Beat 7 — Button** · *Michael.*
 - **[SAY · Michael]** "So now we have a subscribed, version-locked consumer. The
