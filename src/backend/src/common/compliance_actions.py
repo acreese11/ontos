@@ -97,6 +97,14 @@ class FailAction(Action):
 
     def execute(self, context: ActionContext) -> ActionResult:
         message = self.custom_message or context.message or 'Check failed'
+        # Interpolate entity fields into the message, e.g.
+        # 'Table {name} has {contract_count} contract(s)'. Missing/extra braces
+        # are tolerated so a malformed template never breaks the run.
+        if message and '{' in message and context.entity:
+            try:
+                message = message.format(**context.entity)
+            except (KeyError, IndexError, ValueError):
+                pass
         return ActionResult(
             success=False,
             action_type='FAIL',

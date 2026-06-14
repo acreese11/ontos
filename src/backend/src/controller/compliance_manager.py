@@ -2,6 +2,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 
 import json
+import re
 import uuid
 import yaml
 from sqlalchemy.orm import Session
@@ -24,6 +25,60 @@ from src.common.compliance_entities import (
 
 
 logger = get_logger(__name__)
+
+
+def parse_target_catalog(rule: str) -> Optional[str]:
+    """Extract the single target catalog from a compliance rule's text.
+
+    Looks for a clause of the form ``<entity>.catalog = '<name>'`` (or with
+    double quotes) so that table-scoped policies can iterate only the named
+    catalog instead of every catalog in the metastore.
+
+    Returns the catalog name (case preserved) or None when the rule does not
+    pin a single catalog.
+    """
+    if not rule:
+        return None
+    # Match e.g.  t.catalog = 'safe_skies'  or  obj.catalog="prod"
+    match = re.search(r"\.catalog\s*=\s*['\"]([^'\"]+)['\"]", rule)
+    return match.group(1) if match else None
+
+
+def build_contract_table_index(db: Session) -> Dict[str, List[Dict[str, str]]]:
+    """Build a map of fully-qualified UC table -> list of contracts governing it.
+
+    The authoritative contract->source-table link is
+    ``SchemaObjectDb.physical_name`` (the ODCS ``physicalName``), which stores
+    the fully-qualified ``catalog.schema.table``. A contract may have multiple
+    schema objects, so it can appear under several keys.
+
+    Returns:
+        ``{ "catalog.schema.table" (lowercased): [{contract_id, contract_name}, ...] }``
+    """
+    from src.db_models.data_contracts import DataContractDb, SchemaObjectDb
+
+    index: Dict[str, List[Dict[str, str]]] = {}
+    # Single join query avoids the N+1 that lazy="select" schema_objects would
+    # cause when iterating every contract.
+    rows = (
+        db.query(
+            SchemaObjectDb.physical_name,
+            DataContractDb.id,
+            DataContractDb.name,
+        )
+        .join(DataContractDb, SchemaObjectDb.contract_id == DataContractDb.id)
+        .all()
+    )
+    for physical_name, contract_id, contract_name in rows:
+        if not physical_name:
+            continue
+        key = physical_name.strip().lower()
+        if not key:
+            continue
+        index.setdefault(key, []).append(
+            {"contract_id": contract_id, "contract_name": contract_name}
+        )
+    return index
 
 
 class ComplianceManager:
@@ -449,7 +504,13 @@ class ComplianceManager:
         return eval_dsl(rule, obj)
 
     def _iterate_objects(self, db: Session, scope: str) -> List[Dict[str, any]]:
-        """Yield objects based on scope keywords in the rule: catalog objects or app entities."""
+        """Yield objects based on scope keywords in the rule: catalog objects or app entities.
+
+        Table objects are enriched with ``contract_count`` (int) and
+        ``contract_names`` (list[str]) derived from the contract->table index so
+        coverage policies can assert on them. When the rule pins a single catalog
+        (``.catalog = '<name>'``), only that catalog is iterated.
+        """
         objs: List[Dict[str, any]] = []
         scope_lower = scope.lower()
         # Unity Catalog objects
@@ -457,16 +518,32 @@ class ComplianceManager:
             try:
                 from src.common.workspace_client import get_workspace_client
                 ws = get_workspace_client()
-                for cat in ws.catalogs.list():
+                contract_index = build_contract_table_index(db)
+                target_catalog = parse_target_catalog(scope)
+                if target_catalog:
+                    catalogs = [c for c in ws.catalogs.list() if c.name == target_catalog]
+                else:
+                    logger.warning(
+                        "Compliance rule has no single-catalog filter; iterating ALL "
+                        "catalogs (slow). Add a `.catalog = '<name>'` clause to scope it."
+                    )
+                    catalogs = list(ws.catalogs.list())
+                for cat in catalogs:
                     objs.append({"type": "catalog", "name": cat.name})
                     for sch in ws.schemas.list(catalog_name=cat.name):
                         objs.append({"type": "schema", "name": sch.name, "catalog": cat.name})
                         for tbl in ws.tables.list(catalog_name=cat.name, schema_name=sch.name):
                             ttype = getattr(tbl, 'table_type', None)
+                            full_name = getattr(tbl, 'full_name', f"{cat.name}.{sch.name}.{tbl.name}")
+                            contracts = contract_index.get(full_name.lower(), [])
                             objs.append({
                                 "type": "view" if ttype == 'VIEW' else 'table',
                                 "name": tbl.name,
-                                "full_name": getattr(tbl, 'full_name', f"{cat.name}.{sch.name}.{tbl.name}")
+                                "catalog": cat.name,
+                                "schema": sch.name,
+                                "full_name": full_name,
+                                "contract_count": len(contracts),
+                                "contract_names": [c["contract_name"] for c in contracts],
                             })
             except Exception:
                 logger.exception("Failed iterating UC objects for compliance evaluation")
@@ -507,7 +584,25 @@ class ComplianceManager:
             # Create entity iterator
             from src.common.workspace_client import get_workspace_client
             ws = get_workspace_client()
-            entity_iterator = create_entity_iterator(db=db, workspace_client=ws)
+
+            # Build the contract->table coverage index and resolve the single
+            # target catalog (if any) so table objects are enriched with
+            # contract_count/contract_names and UC iteration stays scoped.
+            contract_table_index = build_contract_table_index(db)
+            target_catalog = parse_target_catalog(policy.rule)
+            if not target_catalog:
+                logger.warning(
+                    "Compliance policy '%s' has no single-catalog filter; UC "
+                    "iteration is unscoped across ALL catalogs (slow). Add a "
+                    "`.catalog = '<name>'` clause to scope it.",
+                    policy.name,
+                )
+            entity_iterator = create_entity_iterator(
+                db=db,
+                workspace_client=ws,
+                contract_table_index=contract_table_index,
+                target_catalog=target_catalog,
+            )
 
             # Parse entity filter
             entity_filter = parse_entity_filter(policy.rule)
