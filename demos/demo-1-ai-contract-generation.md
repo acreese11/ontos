@@ -219,3 +219,38 @@ turning dead air into narratable progress.
   reveal, slow down and narrate the actual inferred schema, a quality rule, a
   classification, and pop the **View ODCS** YAML (I-11) so the "open, portable standard"
   is shown, not claimed. This is the single highest-leverage script change.
+
+### Resolution — kick off Ask Ontos FIRST (validated 2026-06-14)
+
+The cleanest fix for the 96 s generation (I-9): **start the Ask Ontos draft at the top
+of the demo, then narrate the manual T1 flow while it runs.** The ~96 s overlaps with
+the several-minute T1, so by the time we reach T2 the contract is simply *done* — no
+dead air, no cover narration. It also upgrades the story: not "watch a spinner" but
+"I'll hand table 2 to the agent, build table 1 by hand, and we'll see what it produced"
+— an agent working autonomously in the background.
+
+**Validated live (2026-06-14):**
+- Kicked off "Draft a contract for `safe_skies.scheduling.oag_schedule_raw`" (an
+  *uncontracted* table) — it went **straight to drafting in one shot** (no consent gate,
+  no "already governed" detour). Confirms the **I-8 prerequisite**: use an uncontracted
+  table so the single prompt drafts immediately.
+- **Navigated away** (Contracts → Home) mid-generation: the Ask Ontos panel is a
+  persistent app-shell drawer — the in-flight generation **survived the navigation and
+  completed on the other page** (9 quality rules, classifications, SLA/roles, "Open in
+  editor" link). So you can fire it off, leave to build T1, and the result is waiting.
+
+**Revised demo structure (replaces sequential T1 → T2):**
+1. Ontos intro → "I'll set the agent drafting table 2 now" — kick off Ask Ontos on the
+   uncontracted telemetry table.
+2. Build T1 (OAG schedule) by hand — the full lifecycle (the substance); narrate the
+   contract's content (I-12) and pop the View ODCS YAML (I-11).
+3. Reveal T2 — the agent's draft is done; open it, contrast control vs. speed.
+
+**Consequences:**
+- **I-9 (96 s dead-air): resolved** by this restructure (no longer demo-critical).
+- **Streamed generation progress** drops from *demo-critical* to *high-value
+  enhancement* — and it *combines* with this: fire off → progress streams in the side
+  panel during T1 (ambient "it's working over there") → done by T2. Build it when there's
+  time, not before the talk.
+- Pre-record/pin still recommended for a deterministic take; for a live take, kicking off
+  first is *safer* (more buffer to finish) as long as the prompt is a clean one-shot.
