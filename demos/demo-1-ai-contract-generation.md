@@ -1,33 +1,130 @@
 # Author — Two Ways to a Published Contract
 
-> **Lifecycle stage: Author** (first demo — introduces Ontos) · **~5:30–6:00** ·
-> the richest demo: the thesis in miniature (operating a contract, not just writing
-> one). Co-narrated: **Michael** = business framing + the human/governance beat,
-> **Alan** = technical mechanics. Pre-recorded, narrated live.
+> **First demo · ~5–6 min.** Alan narrates throughout; **Michael interjects questions to
+> keep it conversational** — prompts marked *[Michael Q]* below are optional, drop them in
+> as the flow allows. The thesis in miniature: *operating* a contract end-to-end, not just
+> writing one. Two ways in — by hand (the full lifecycle) and by AI (Ask Ontos) — same
+> contract, same lifecycle. The AI draft is kicked off **first** so its ~96s generation
+> hides behind the manual build.
 
-**The structure — two ways to author the same kind of contract:**
-- **Table 1 (OAG schedule) — by hand:** the governed craft + the full lifecycle
-  (Infer-from-Catalog → enrich → review → approve → publish). The *substance*.
-- **Table 2 (ADS-B telemetry) — via Ask Ontos:** the AI/agent path. One ask drafts
-  a complete ODCS contract. The fast coda + the agent showcase.
+## Run setup (before recording)
+- **Tables:** `safe_skies.scheduling.oag_schedule` (manual, T1) · `safe_skies.flight_ops.adsb_v2_raw`
+  (AI, T2). Use `adsb_v2_raw` — it's uncontracted, so Ask Ontos drafts in one shot; do **not**
+  use `adsb_v2` (already governed by `live_flights`).
+- **Create the contracts fresh, live** — post-fix inference now emits correct ODCS types.
+  Don't reuse old fixtures (their YAML still shows `ColumnTypeName.STRING`).
+- **Personas:** author as a producer; have a **Data Steward** login staged for the approval
+  beat (Start Review + Approve are steward-gated).
+- **Accept the AI consent gate once** before recording (the first Ask Ontos AI call pops a
+  one-time "AI-Powered Analysis" dialog).
+- **Connection** configured so Infer-from-Catalog can browse `safe_skies.*`.
+- Optional: pin/cache the Ask Ontos output for a deterministic T2.
 
-Two modes defuse "you cherry-picked the table" **and** contrast control vs. speed.
+## Timing (~5:00–5:30)
+| Beat | Target |
+|---|---|
+| 0. Open + Ontos intro | 0:25 |
+| 1. Kick off the AI draft | 0:20 |
+| 2. Create by hand | 0:30 |
+| 3. Infer schema from UC | 0:30 |
+| 4. Meaning + quality (narrate content) | 1:00 |
+| 5. ODCS YAML reveal | 0:25 |
+| 6. Submit → Start Review → Approve | 0:50 |
+| 7. Activate + publish | 0:25 |
+| 8. Reveal the AI draft | 0:40 |
+| 9. Close + pivot | 0:20 |
 
-**Readiness:** *(corrected by the 2026-06-14 live run — see "Live-run findings" below;
-several scripted beats need fixes/changes first.)*
-- ✅ Manual path core works: New Contract → Infer-from-Catalog (remote UC) → lifecycle →
-  publish. ⚠️ but the **enrich** beats are broken (semantic-link I-4, DQX-profile I-2)
-  and the inferred **type display** is buggy (I-1, shows `ColumnTypeName.STRING`).
-- ⚠️ AI path: the generator works end to end, **but took 95.8 s** (not 10–30s),
-  `adsb_v2` is **already governed** (I-8), and there's a one-time consent gate (I-10).
-  Pre-record T2; pin/cache for determinism.
-- ⚠️ Approval: the **Approve button on `proposed` 500s** — must hop through Under Review
-  (I-3). The persona switch still needs a recording pass.
+> The AI generation (~96s) runs during beats 2–7 and is done by beat 8 — nothing to wait on.
 
-**The point:** AI removes the blank page — but that's the *easy* sliver. The real
-substance is **operating the lifecycle**: infer → enrich → review → approve →
-publish. *That's* operating a contract, not just defining one. Two ways in, same
-contract, same lifecycle.
+## Talk track
+
+**0. Open Ontos + intro**
+- **[DO]** Open Ontos (the Contracts list).
+- **[SAY]** "This is Ontos — an open-source lifecycle layer for data contracts and products,
+  right on Unity Catalog. It's where a raw table becomes a governed, discoverable product:
+  you author the contract, enforce it, publish it, and keep it honest — all on the open
+  ODCS standard."
+- *[Michael Q]* "So when a Boeing team gets a brand-new dataset, where does this start?"
+- **[SAY]** "Right here. Today that first question — what's in it, can anyone trust it — is a
+  blank YAML file and a week of meetings. Watch how that compresses."
+
+**1. Kick off the AI draft FIRST**
+- **[SAY]** "Two ways to author here — by hand, and by AI. I'll set the AI going on one
+  table, and build another by hand while it works."
+- **[DO]** Ask Ontos → "Draft a data contract for `safe_skies.flight_ops.adsb_v2_raw`." → Send.
+  **[SEE]** it starts generating ("Thinking…").
+- **[SAY]** "That agent's now reading the table, sampling it, drafting a full contract — in
+  the background. We'll come back to it."
+
+**2. Create the contract by hand**
+- **[DO]** New Contract → name `oag_schedule`, version `1.0.0`, owner `schedule-data-ops`,
+  domain `Scheduling` → Create.
+- **[SAY]** "The OAG flight schedule — our published timetable. An empty draft. Let's fill it
+  from the data itself."
+
+**3. Infer the schema from Unity Catalog**
+- **[DO]** Infer from Catalog → `safe_skies` → `scheduling` → `oag_schedule` → Infer.
+  **[SEE]** the columns populate with real types.
+- **[SAY]** "Ontos pulls the schema straight from Unity Catalog — columns, types, keys. The
+  catalog already knows the structure; that part's free."
+
+**4. Add meaning + quality — narrate the content**
+- **[SAY]** "But a schema isn't a contract. Look at what it captured: airline and airport
+  codes in both ICAO and IATA, a flight key, scheduled times as real timestamps — and every
+  column carries a **classification**." **[DO]** point at a `Restricted`/`Internal` column.
+- *[Michael Q]* "Who decides those classifications?"
+- **[SAY]** "The contract does — it carries the governance, not a wiki page. That
+  classification drives who can see what downstream."
+- **[DO]** Add Rule → one quality rule (not-null on `flight_key`). **[SAY]** "And one quality
+  rule — watch this exact rule get enforced in the next demo."
+
+**5. Show the ODCS YAML — make "open" tangible**
+- **[DO]** View / Export ODCS → **View ODCS**. **[SEE]** the inline ODCS YAML.
+- **[SAY]** "And this isn't our format — it's **ODCS**, the Open Data Contract Standard, an
+  open Linux-Foundation spec. Machine-readable, vendor-neutral. The contract's portable —
+  not locked to Ontos, or to us."
+
+**6. The lifecycle — submit → review → approve**
+- **[DO · producer]** Request… → **Request Data Steward Review**. **[SEE]** **Draft → Proposed**.
+- **[SAY]** "The owner doesn't publish on a whim — it goes to a steward."
+- **[DO · steward persona]** **Start Review** (→ Under Review) → **Approve** (→ Approved).
+- *[Michael Q]* "Could the producer just approve their own?"
+- **[SAY]** "No — approval is steward-gated. Three real stages: proposed, under review,
+  approved. The human stays in the loop — not a rubber stamp."
+
+**7. Activate + publish**
+- **[DO]** Request… → Change Status → **Active**; then **Publish** → scope **Organization** →
+  Confirm. **[SEE]** **Active + Published**.
+- **[SAY]** "Approved, active, published to the whole organization — discoverable in the
+  marketplace, which is the next demo."
+
+**8. Reveal the AI draft**
+- **[DO]** Open **Ask Ontos** (running this whole time) — the draft's done; open it.
+  **[SEE]** "Draft Contract Created" — full schema, ~9–11 quality rules, classifications,
+  SLA, roles.
+- **[SAY]** "And while we did that by hand — the agent finished. Same open standard, one ask.
+  Totally different shape — telemetry, not a schedule — and it generalized: it sampled the
+  real data, inferred types and classifications, and wrote actual quality rules. We didn't
+  hand-tune any of this."
+- *[Michael Q]* "So from here it's…?"
+- **[SAY]** "The same lifecycle — review, approve, publish. The AI just removed the blank page."
+
+**9. Close + pivot**
+- **[SAY]** "Two ways in — by hand for control, by AI for speed — same contract, same
+  lifecycle. Authoring's the easy part now; *operating* it is the rest of the talk. Next:
+  making sure it's actually enforced."
+
+## Reset between takes
+Delete the contracts created during the take, or re-seed: `DELETE` then
+`POST /api/settings/demo-data/aviation` (see `README.md`). Re-infer any reused contract so
+its YAML shows correct ODCS types.
+
+---
+
+# Appendix — analysis & live-run findings
+
+*(Rationale, the 2026-06-14 live-run record, issues + mitigations, structure feedback, and
+troubleshooting. The talk track above is the run-ready distillation of all this.)*
 
 ## USER-GUIDE points covered
 Ontos intro (first appearance) · Infer-from-Catalog (structural UC schema) ·
@@ -48,135 +145,6 @@ Submit-for-Review / Steward approval · change-status to Active · request-publi
 - **No ICAO/PII badges.** PII is a per-column `classification` (Public/Internal/
   Restricted) + a `containsPII` custom property — narrate "classification," not a badge.
 
-## Timing budget (~5:00–5:30)
-| Beat | Target |
-|---|---|
-| 0. Open Ontos + intro | 0:25 |
-| 1. Kick off the AI draft (Ask Ontos) | 0:20 |
-| 2. Create the contract by hand | 0:30 |
-| 3. Infer schema from UC | 0:30 |
-| 4. Meaning + quality (narrate content) | 1:00 |
-| 5. ODCS YAML reveal | 0:25 |
-| 6. Submit → Start Review → Approve (steward) | 0:50 |
-| 7. Activate + publish | 0:25 |
-| 8. Reveal the AI draft | 0:40 |
-| 9. Close + pivot | 0:20 |
-
-> The AI generation (~96s) runs during beats 2–7 (~3:30) and finishes before beat 8 — no cover narration needed.
-
-## Pre-flight
-- Two raw UC tables for the two paths:
-  - `safe_skies.scheduling.oag_schedule` (OAG-style schedule) — the **manual** table (uncontracted ✓).
-  - ⚠️ `safe_skies.flight_ops.adsb_v2` (ADS-B telemetry) is **already governed** by the
-    `live_flights` contract — for the **Ask Ontos** path pick a genuinely *uncontracted*
-    telemetry table, or it won't draft fresh (I-8).
-- **Accept the AI consent gate** once before recording (I-10); **install
-  `dqx_profile_datasets`** (Settings > Jobs) if keeping the DQX-suggestion beat (I-2).
-- **Producer / domain-owner** persona for authoring; **Data Steward** persona staged
-  for the approval beat (persona switch so Draft→Proposed→Approved shows on camera).
-- A connection configured so **Infer-from-Catalog** can browse `safe_skies.*`.
-- **Ask Ontos** reachable and able to invoke the contract-generator (verified).
-- Pin/cache the Ask Ontos generation for a deterministic recording.
-
-## Walkthrough (Ask-Ontos-first)
-
-> Co-narrated. **Michael** = business framing + the human/governance beat; **Alan** =
-> mechanics. The AI draft (T2) is kicked off **first** and runs in the background through
-> the whole manual flow (T1), then revealed at the end — so the ~96s generation never
-> shows as dead air. Pre-record/pin for a deterministic take.
->
-> **Open decision (I-8):** T2 needs a genuinely *uncontracted* telemetry table — `adsb_v2`
-> is already governed by `live_flights`. Use a raw/alt telemetry table, or drop
-> `live_flights` from the seed, else the agent opens with "already governed" instead of
-> drafting.
-> **Validate before recording:** the manual add-quality-rule UI (beat 4) and the View ODCS
-> modal (beat 5). Accept the one-time AI consent gate beforehand (I-10).
-
-**0. Open Ontos + intro (Alan, ~25s)**
-- **[DO]** Open Ontos (the Contracts list / Home).
-- **[SAY · Alan]** "This is Ontos — an open-source lifecycle layer for data contracts and
-  data products, right on Unity Catalog. It's where a raw table becomes a governed,
-  discoverable product: you author the contract, enforce it, publish it, and keep it
-  honest — all on the open ODCS standard."
-- **[SAY · Michael]** "When a Boeing domain team gets a new dataset, the first question is:
-  what's in it, and can anyone trust it? Today that's a blank YAML file and a week of
-  meetings. Watch how that compresses."
-
-**1. Kick off the AI draft FIRST (Alan, ~20s)**
-- **[SAY · Alan]** "Two ways to author here — by hand, and by AI. I'll start the AI on one
-  table, and build another by hand while it works."
-- **[DO]** Open **Ask Ontos** → "Draft a data contract for the `[uncontracted telemetry
-  table]`." Send. **[SEE]** It starts generating ("Thinking…").
-- **[SAY · Alan]** "That agent's now reading the table, sampling it, and drafting a full
-  contract in the background. We'll come back to it. Meanwhile — the manual path."
-- *(Verified: the panel persists across navigation; the generation keeps running while we
-  do T1 and finishes well before beat 8.)*
-
-**2. Create the contract by hand (Alan, ~30s)**
-- **[DO]** New Contract → name `oag_schedule`, version `1.0.0`, owner `schedule-data-ops`,
-  domain `Scheduling` → Create. **[SEE]** Lands on the new draft contract.
-- **[SAY · Alan]** "The OAG flight schedule — our published timetable. Empty draft. Let's
-  fill it from the data itself."
-
-**3. Infer the schema from Unity Catalog (Alan, ~30s)**
-- **[DO]** Infer from Catalog → browse `safe_skies` → `scheduling` → `oag_schedule` →
-  Infer. **[SEE]** 17 columns populate with real types (system columns like `_rescued_data`
-  are stripped).
-- **[SAY · Alan]** "Ontos pulls the schema straight from Unity Catalog — columns, types,
-  keys. The catalog already knows the structure; that part's free."
-
-**4. Add meaning + quality — narrate the CONTENT (Alan + Michael, ~1:00)** [I-12]
-- **[SAY · Alan]** "But a schema isn't a contract. Look at what it captured: airline and
-  airport codes in both ICAO and IATA, a flight key, scheduled times as real timestamps —
-  and every column carries a **classification**." **[DO]** point at a `Restricted`/`Internal`
-  column. **[SEE]** per-column classification.
-- **[SAY · Michael]** "That classification is governance — it decides who can see what
-  downstream. The contract carries it, not a wiki."
-- **[DO]** Add one **quality rule** (e.g., not-null on `flight_key`). **[SEE]** the rule on
-  the contract. **[SAY · Alan]** "And one quality rule — we'll watch this exact rule get
-  enforced in the next demo."
-  - **[VALIDATE]** the manual add-quality-rule UI; OR if the `dqx_profile_datasets` workflow
-    is installed, **Profile with DQX** → accept a suggested rule instead (I-2).
-
-**5. Show the ODCS YAML — make "open" tangible (Alan, ~25s)** [I-11]
-- **[DO]** **View / Export ODCS → View ODCS**. **[SEE]** the inline ODCS YAML.
-- **[SAY · Alan]** "And this isn't our format — it's **ODCS**, the Open Data Contract
-  Standard, an open Linux-Foundation spec. Machine-readable, vendor-neutral. This contract
-  is portable — not locked to Ontos, or to us."
-- **[VALIDATE]** the View ODCS modal renders the draft's YAML.
-
-**6. The lifecycle — submit → review → approve (Michael + Alan, ~50s)**
-- **[SAY · Michael]** "The owner doesn't publish on a whim." **[DO · producer]** Request… →
-  **Request Data Steward Review**. **[SEE]** **Draft → Proposed**.
-- **[DO · steward persona]** **Start Review** → **Proposed → Under Review**; then **Approve**
-  → **Under Review → Approved**.
-- **[SAY · Michael]** "A steward picks it up, reviews, and signs off — three real stages,
-  the human stays in the loop. Not a rubber stamp."
-- *(Start Review + Approve are steward-gated; stage the producer→steward persona switch on
-  camera.)*
-
-**7. Activate + publish (Alan, ~25s)**
-- **[DO]** Request… → Change Status → **Active**; then **Publish** → scope **Organization**
-  → Confirm. **[SEE]** **Active + Published** — now discoverable.
-- **[SAY · Alan]** "Approved, active, published to the whole organization — discoverable in
-  the marketplace, which is the next demo."
-
-**8. Reveal the AI draft (Alan + Michael, ~40s)**
-- **[DO]** Open **Ask Ontos** (running the whole time) — the draft is done; open it.
-  **[SEE]** "Draft Contract Created" — full schema, ~9–11 quality rules, classifications,
-  SLA, roles.
-- **[SAY · Alan]** "And while we did that by hand — the agent finished. Same open standard,
-  one ask. Totally different shape — telemetry, not a schedule — and it generalized: it
-  sampled the real data, inferred types and classifications, and wrote actual quality rules.
-  We didn't hand-tune any of this."
-- **[SAY · Michael]** "From here it's the same lifecycle — review, approve, publish. The AI
-  just removed the blank page."
-
-**9. Close + pivot (Alan, ~20s)**
-- **[SAY · Alan]** "Two ways in — by hand for control, by AI for speed — same contract,
-  same lifecycle. Authoring's the easy part now; *operating* it is the rest of the talk.
-  Next: making sure it's actually enforced."
-
 ## Gotchas
 - **opus-4.x rejects `temperature`** — fixed via `llm_client.chat_completion`
   (retries without it). If a *new* table errors with `BAD_REQUEST … temperature`,
@@ -188,12 +156,6 @@ Submit-for-Review / Steward approval · change-status to Active · request-publi
 - **Approval needs two personas** — a producer can't approve their own contract;
   stage the steward approval (persona switch) or the state won't transition.
 - **Ask Ontos latency** — pin/cache the generated contract so T2 is deterministic.
-
-## Reset between takes
-Delete the draft/published contracts, or re-seed:
-`DELETE` then `POST /api/settings/demo-data/aviation` (see `README.md`).
-- Live-run fixtures left behind (2026-06-14, delete before a clean take): `oag_schedule`
-  (now approved + published) and `adsb_v2_flight_tracking_data` (AI-drafted draft).
 
 ## Live-run findings (2026-06-14)
 
