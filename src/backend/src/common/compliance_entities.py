@@ -70,9 +70,14 @@ class UnityCatalogLoader(EntityLoader):
         return ['catalog', 'schema', 'table', 'view', 'function', 'volume']
 
     def _list_catalogs(self):
-        """List catalogs, honoring the single-catalog scope when set."""
+        """List catalogs, honoring the single-catalog scope when set.
+
+        UC catalog names are case-insensitive, so the scope comparison
+        lowercases both sides.
+        """
         if self.target_catalog:
-            return [c for c in self.ws.catalogs.list() if c.name == self.target_catalog]
+            target = self.target_catalog.lower()
+            return [c for c in self.ws.catalogs.list() if (c.name or '').lower() == target]
         return self.ws.catalogs.list()
 
     def load_entities(
@@ -159,7 +164,7 @@ class UnityCatalogLoader(EntityLoader):
 
             # Load functions
             if 'function' in entity_types:
-                for catalog in self.ws.catalogs.list():
+                for catalog in self._list_catalogs():
                     try:
                         for schema in self.ws.schemas.list(catalog_name=catalog.name):
                             try:
@@ -186,7 +191,7 @@ class UnityCatalogLoader(EntityLoader):
 
             # Load volumes
             if 'volume' in entity_types:
-                for catalog in self.ws.catalogs.list():
+                for catalog in self._list_catalogs():
                     try:
                         for schema in self.ws.schemas.list(catalog_name=catalog.name):
                             try:

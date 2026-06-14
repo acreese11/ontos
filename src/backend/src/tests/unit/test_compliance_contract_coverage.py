@@ -18,8 +18,20 @@ from src.controller.compliance_manager import (
     parse_target_catalog,
 )
 from src.common.compliance_entities import UnityCatalogLoader
+from src.common.compliance_actions import FailAction, ActionContext
 from src.common.compliance_dsl import parse_rule, Evaluator
 from src.db_models.data_contracts import DataContractDb, SchemaObjectDb
+
+
+def _fail_context(entity):
+    return ActionContext(
+        entity=entity,
+        entity_type="table",
+        entity_id=entity.get("name", ""),
+        rule_id="r1",
+        rule_name="coverage",
+        passed=False,
+    )
 
 
 # --- Fakes for the Databricks WorkspaceClient (no live connection needed) ---
@@ -123,7 +135,7 @@ def test_index_skips_null_physical_name(db_session):
     )
     db_session.flush()
     index = build_contract_table_index(db_session)
-    assert index == {} or all(v for v in index.values())
+    assert index == {}
 
 
 # --- parse_target_catalog ---
@@ -187,6 +199,47 @@ def test_loader_scopes_to_target_catalog():
     assert "junk" not in catalogs
     names = {e["name"] for e in loader.load_entities(["table"])}
     assert names == {"oag_schedule"}
+
+
+def test_loader_unscoped_lists_all_catalogs():
+    """target_catalog=None: enrichment still works and all catalogs are listed."""
+    ws = _FakeWorkspaceClient(
+        {
+            "safe_skies": {"scheduling": ["oag_schedule"]},
+            "other_catalog": {"misc": ["junk"]},
+        }
+    )
+    index = {
+        "safe_skies.scheduling.oag_schedule": [
+            {"contract_id": "c1", "contract_name": "oag"},
+        ],
+    }
+    loader = UnityCatalogLoader(ws, contract_table_index=index, target_catalog=None)
+    tables = {e["name"]: e for e in loader.load_entities(["table"]) if e["type"] == "table"}
+    # All catalogs iterated when unscoped.
+    assert set(tables) == {"oag_schedule", "junk"}
+    # Enrichment still applied.
+    assert tables["oag_schedule"]["contract_count"] == 1
+    assert tables["junk"]["contract_count"] == 0
+
+
+# --- FailAction message interpolation (guards the bare-except fallback) ---
+
+def test_fail_action_interpolates_entity_fields():
+    action = FailAction("Table {name} has {contract_count} contract(s)")
+    result = action.execute(_fail_context({"name": "t", "contract_count": 0}))
+    assert result.success is False
+    assert result.message == "Table t has 0 contract(s)"
+
+
+def test_fail_action_malformed_template_falls_back():
+    # {name.foo} raises AttributeError inside str.format; must NOT propagate,
+    # and the literal/unchanged message is returned.
+    template = "{name.foo}"
+    action = FailAction(template)
+    result = action.execute(_fail_context({"name": "t"}))
+    assert result.success is False
+    assert result.message == template
 
 
 # --- Seeded rule parses and evaluates against enriched table dicts ---

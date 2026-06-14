@@ -53,6 +53,8 @@ ON_FAIL action
 | `REMOVE_TAG` | `REMOVE_TAG key` | Remove a tag from the entity |
 | `NOTIFY` | `NOTIFY 'email@example.com'` | Send notification to recipients |
 
+> **FAIL message placeholders:** `FAIL` messages support `{field}` placeholders interpolated from the matched entity, e.g. `ON_FAIL FAIL 'Table {name} has {contract_count} contract(s)'`. Interpolation is guarded — a malformed template falls back to the literal message rather than dropping it.
+
 ## Practical Examples
 
 ### Example 1: Naming Convention Enforcement

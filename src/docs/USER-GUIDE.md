@@ -2019,6 +2019,8 @@ ON_FAIL action
 | `REMOVE_TAG` | `REMOVE_TAG key` | Remove tag |
 | `NOTIFY` | `NOTIFY 'email@company.com'` | Send notification |
 
+> **FAIL message placeholders:** `FAIL` messages support `{field}` placeholders that are interpolated from the matched entity, e.g. `ON_FAIL FAIL 'Table {name} has {contract_count} contract(s)'`. Interpolation is guarded — a malformed template (unknown or invalid placeholder) falls back to the literal message rather than dropping it.
+
 ### Entity Types
 
 You can write rules for:

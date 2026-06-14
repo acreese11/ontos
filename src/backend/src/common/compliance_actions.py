@@ -103,7 +103,10 @@ class FailAction(Action):
         if message and '{' in message and context.entity:
             try:
                 message = message.format(**context.entity)
-            except (KeyError, IndexError, ValueError):
+            except Exception:
+                # Any malformed template (KeyError, IndexError, ValueError,
+                # AttributeError, ...) falls back to the literal message so a
+                # bad placeholder never drops the FAIL message.
                 pass
         return ActionResult(
             success=False,

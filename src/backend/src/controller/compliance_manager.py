@@ -52,6 +52,13 @@ def build_contract_table_index(db: Session) -> Dict[str, List[Dict[str, str]]]:
     the fully-qualified ``catalog.schema.table``. A contract may have multiple
     schema objects, so it can appear under several keys.
 
+    Assumption: ``physical_name`` is treated as a **fully-qualified**
+    ``catalog.schema.table``. Contracts whose ``physicalName`` is a bare /
+    non-FQN name won't match any UC table key and will surface as
+    ``contract_count=0`` (a false "ungoverned" reading). Infer-from-Catalog and
+    the AI generator always emit FQNs; hand-authored non-FQN contracts are the
+    edge case (fuzzy matching is a follow-up).
+
     Returns:
         ``{ "catalog.schema.table" (lowercased): [{contract_id, contract_name}, ...] }``
     """
@@ -504,13 +511,7 @@ class ComplianceManager:
         return eval_dsl(rule, obj)
 
     def _iterate_objects(self, db: Session, scope: str) -> List[Dict[str, any]]:
-        """Yield objects based on scope keywords in the rule: catalog objects or app entities.
-
-        Table objects are enriched with ``contract_count`` (int) and
-        ``contract_names`` (list[str]) derived from the contract->table index so
-        coverage policies can assert on them. When the rule pins a single catalog
-        (``.catalog = '<name>'``), only that catalog is iterated.
-        """
+        """Yield objects based on scope keywords in the rule: catalog objects or app entities."""
         objs: List[Dict[str, any]] = []
         scope_lower = scope.lower()
         # Unity Catalog objects
@@ -518,32 +519,16 @@ class ComplianceManager:
             try:
                 from src.common.workspace_client import get_workspace_client
                 ws = get_workspace_client()
-                contract_index = build_contract_table_index(db)
-                target_catalog = parse_target_catalog(scope)
-                if target_catalog:
-                    catalogs = [c for c in ws.catalogs.list() if c.name == target_catalog]
-                else:
-                    logger.warning(
-                        "Compliance rule has no single-catalog filter; iterating ALL "
-                        "catalogs (slow). Add a `.catalog = '<name>'` clause to scope it."
-                    )
-                    catalogs = list(ws.catalogs.list())
-                for cat in catalogs:
+                for cat in ws.catalogs.list():
                     objs.append({"type": "catalog", "name": cat.name})
                     for sch in ws.schemas.list(catalog_name=cat.name):
                         objs.append({"type": "schema", "name": sch.name, "catalog": cat.name})
                         for tbl in ws.tables.list(catalog_name=cat.name, schema_name=sch.name):
                             ttype = getattr(tbl, 'table_type', None)
-                            full_name = getattr(tbl, 'full_name', f"{cat.name}.{sch.name}.{tbl.name}")
-                            contracts = contract_index.get(full_name.lower(), [])
                             objs.append({
                                 "type": "view" if ttype == 'VIEW' else 'table',
                                 "name": tbl.name,
-                                "catalog": cat.name,
-                                "schema": sch.name,
-                                "full_name": full_name,
-                                "contract_count": len(contracts),
-                                "contract_names": [c["contract_name"] for c in contracts],
+                                "full_name": getattr(tbl, 'full_name', f"{cat.name}.{sch.name}.{tbl.name}")
                             })
             except Exception:
                 logger.exception("Failed iterating UC objects for compliance evaluation")

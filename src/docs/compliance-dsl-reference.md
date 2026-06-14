@@ -148,6 +148,16 @@ Mark check as failed with custom message:
 ON_FAIL FAIL 'Name must start with lowercase letter'
 ```
 
+The message supports `{field}` placeholders interpolated from the matched
+entity:
+
+```
+ON_FAIL FAIL 'Table {name} has {contract_count} contract(s)'
+```
+
+Interpolation is guarded — a malformed template (unknown or invalid
+placeholder) falls back to the literal message rather than dropping it.
+
 ### ASSIGN_TAG
 Add or update a tag on the entity:
 
