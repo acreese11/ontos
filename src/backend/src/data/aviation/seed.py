@@ -545,7 +545,7 @@ def load_aviation_demo(
                     "(expected exactly 1)."
                 ),
                 rule=(
-                    f"MATCH (t:Object) WHERE t.type IN ['table'] AND t.catalog = '{CATALOG}' "
+                    f"MATCH (t:Object) WHERE t.type IN ['table'] AND t.catalog = '{CATALOG}' AND t.schema != 'information_schema' "
                     "ASSERT t.contract_count = 1 "
                     "ON_FAIL FAIL 'Table {name} has {contract_count} contract(s) (expected exactly 1)'"
                 ),
