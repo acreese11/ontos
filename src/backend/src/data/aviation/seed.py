@@ -29,6 +29,7 @@ from src.models.teams import TeamCreate
 
 from .definitions import (
     ALL_CONTRACTS,
+    CATALOG,
     COMPOSITIONS,
     DOMAINS,
     REAL_PRODUCTS,
@@ -511,6 +512,56 @@ def load_aviation_demo(
     except Exception as e:
         logger.warning("Failed to seed compliance policy: %s", e, exc_info=True)
         report["compliance_policies"] = {"failed": [str(e)]}
+
+    # ─── Compliance policy: every governed table has exactly one contract ──
+    # Coverage check: flag UC tables in the demo catalog that have 0 contracts
+    # (ungoverned) or >1 contracts (conflicting governance). The engine enriches
+    # each table object with contract_count via SchemaObjectDb.physicalName, and
+    # the `.catalog = '<CATALOG>'` clause scopes iteration to a single catalog.
+    try:
+        from src.controller.compliance_manager import ComplianceManager
+        from src.models.compliance import CompliancePolicy
+        from src.db_models.compliance import CompliancePolicyDb
+        from uuid import uuid4
+        compliance_mgr = ComplianceManager()
+        coverage_name = "Contract Coverage"
+        existing_coverage = (
+            db.query(CompliancePolicyDb)
+            .filter(CompliancePolicyDb.name == coverage_name)
+            .first()
+        )
+        if existing_coverage is None:
+            coverage_policy = CompliancePolicy(
+                id=uuid4(),
+                name=coverage_name,
+                description=(
+                    f"Every table in the {CATALOG} catalog must be governed by exactly "
+                    "one data contract. Tables with 0 contracts are ungoverned; tables "
+                    "with more than 1 contract have conflicting governance. Coverage is "
+                    "derived from each contract's ODCS physicalName (catalog.schema.table)."
+                ),
+                failure_message=(
+                    "Table is governed by an unexpected number of contracts "
+                    "(expected exactly 1)."
+                ),
+                rule=(
+                    f"MATCH (t:Object) WHERE t.type IN ['table'] AND t.catalog = '{CATALOG}' "
+                    "ASSERT t.contract_count = 1 "
+                    "ON_FAIL FAIL 'Table {name} has {contract_count} contract(s) (expected exactly 1)'"
+                ),
+                compliance=0.0,
+                category="Coverage",
+                severity="warning",
+                is_active=True,
+            )
+            compliance_mgr.create_policy(db, policy=coverage_policy, current_user=current_user)
+            report.setdefault("compliance_policies", {}).setdefault("created", []).append(coverage_name)
+            logger.info("Seeded compliance policy: %s", coverage_name)
+        else:
+            report.setdefault("compliance_policies", {}).setdefault("existing", []).append(coverage_name)
+    except Exception as e:
+        logger.warning("Failed to seed Contract Coverage policy: %s", e, exc_info=True)
+        report.setdefault("compliance_policies", {}).setdefault("failed", []).append(str(e))
 
     # Final commit
     db.commit()

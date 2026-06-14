@@ -52,11 +52,33 @@ class EntityLoader(ABC):
 class UnityCatalogLoader(EntityLoader):
     """Load entities from Unity Catalog."""
 
-    def __init__(self, workspace_client):
+    def __init__(
+        self,
+        workspace_client,
+        contract_table_index: Optional[Dict[str, List[Dict[str, str]]]] = None,
+        target_catalog: Optional[str] = None,
+    ):
         self.ws = workspace_client
+        # Map of "catalog.schema.table" (lowercased) -> [{contract_id, contract_name}, ...]
+        # used to enrich table objects with contract coverage counts.
+        self.contract_table_index = contract_table_index or {}
+        # When set, only this catalog is listed (table coverage policies are
+        # typically scoped to a single catalog; iterating all catalogs is slow).
+        self.target_catalog = target_catalog
 
     def get_supported_types(self) -> List[str]:
         return ['catalog', 'schema', 'table', 'view', 'function', 'volume']
+
+    def _list_catalogs(self):
+        """List catalogs, honoring the single-catalog scope when set.
+
+        UC catalog names are case-insensitive, so the scope comparison
+        lowercases both sides.
+        """
+        if self.target_catalog:
+            target = self.target_catalog.lower()
+            return [c for c in self.ws.catalogs.list() if (c.name or '').lower() == target]
+        return self.ws.catalogs.list()
 
     def load_entities(
         self,
@@ -67,7 +89,7 @@ class UnityCatalogLoader(EntityLoader):
         try:
             # Load catalogs
             if 'catalog' in entity_types:
-                for catalog in self.ws.catalogs.list():
+                for catalog in self._list_catalogs():
                     yield {
                         'type': 'catalog',
                         'name': catalog.name,
@@ -81,7 +103,7 @@ class UnityCatalogLoader(EntityLoader):
 
             # Load schemas
             if 'schema' in entity_types:
-                for catalog in self.ws.catalogs.list():
+                for catalog in self._list_catalogs():
                     try:
                         for schema in self.ws.schemas.list(catalog_name=catalog.name):
                             yield {
@@ -100,7 +122,7 @@ class UnityCatalogLoader(EntityLoader):
 
             # Load tables and views
             if 'table' in entity_types or 'view' in entity_types:
-                for catalog in self.ws.catalogs.list():
+                for catalog in self._list_catalogs():
                     try:
                         for schema in self.ws.schemas.list(catalog_name=catalog.name):
                             try:
@@ -114,11 +136,16 @@ class UnityCatalogLoader(EntityLoader):
                                     if entity_type not in entity_types:
                                         continue
 
+                                    full_name = getattr(table, 'full_name', f"{catalog.name}.{schema.name}.{table.name}")
+                                    # Contract coverage: how many contracts claim
+                                    # this physical table via ODCS physicalName.
+                                    contracts = self.contract_table_index.get(full_name.lower(), [])
+
                                     yield {
                                         'type': entity_type,
                                         'name': table.name,
-                                        'id': getattr(table, 'full_name', f"{catalog.name}.{schema.name}.{table.name}"),
-                                        'full_name': getattr(table, 'full_name', f"{catalog.name}.{schema.name}.{table.name}"),
+                                        'id': full_name,
+                                        'full_name': full_name,
                                         'catalog': catalog.name,
                                         'schema': schema.name,
                                         'table_type': table_type_raw,
@@ -127,6 +154,8 @@ class UnityCatalogLoader(EntityLoader):
                                         'created_at': getattr(table, 'created_at', None),
                                         'updated_at': getattr(table, 'updated_at', None),
                                         'storage_location': getattr(table, 'storage_location', None),
+                                        'contract_count': len(contracts),
+                                        'contract_names': [c['contract_name'] for c in contracts],
                                     }
                             except Exception:
                                 logger.exception(f"Failed to list tables for schema {catalog.name}.{schema.name}")
@@ -135,7 +164,7 @@ class UnityCatalogLoader(EntityLoader):
 
             # Load functions
             if 'function' in entity_types:
-                for catalog in self.ws.catalogs.list():
+                for catalog in self._list_catalogs():
                     try:
                         for schema in self.ws.schemas.list(catalog_name=catalog.name):
                             try:
@@ -162,7 +191,7 @@ class UnityCatalogLoader(EntityLoader):
 
             # Load volumes
             if 'volume' in entity_types:
-                for catalog in self.ws.catalogs.list():
+                for catalog in self._list_catalogs():
                     try:
                         for schema in self.ws.schemas.list(catalog_name=catalog.name):
                             try:
@@ -407,13 +436,19 @@ class EntityIterator:
 
 def create_entity_iterator(
     db: Optional[Session] = None,
-    workspace_client: Optional[Any] = None
+    workspace_client: Optional[Any] = None,
+    contract_table_index: Optional[Dict[str, List[Dict[str, str]]]] = None,
+    target_catalog: Optional[str] = None,
 ) -> EntityIterator:
     """Create an entity iterator with standard loaders.
 
     Args:
         db: Database session for app entities
         workspace_client: Databricks workspace client for UC entities
+        contract_table_index: Optional map of "catalog.schema.table" (lowercased)
+            -> [{contract_id, contract_name}, ...] used to enrich table objects
+            with ``contract_count`` / ``contract_names`` for coverage policies.
+        target_catalog: Optional single catalog to scope UC iteration to.
 
     Returns:
         Configured EntityIterator
@@ -421,7 +456,13 @@ def create_entity_iterator(
     loaders = []
 
     if workspace_client:
-        loaders.append(UnityCatalogLoader(workspace_client))
+        loaders.append(
+            UnityCatalogLoader(
+                workspace_client,
+                contract_table_index=contract_table_index,
+                target_catalog=target_catalog,
+            )
+        )
 
     if db:
         loaders.append(AppEntityLoader(db))

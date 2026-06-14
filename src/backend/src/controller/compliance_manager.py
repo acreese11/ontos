@@ -2,6 +2,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 
 import json
+import re
 import uuid
 import yaml
 from sqlalchemy.orm import Session
@@ -24,6 +25,67 @@ from src.common.compliance_entities import (
 
 
 logger = get_logger(__name__)
+
+
+def parse_target_catalog(rule: str) -> Optional[str]:
+    """Extract the single target catalog from a compliance rule's text.
+
+    Looks for a clause of the form ``<entity>.catalog = '<name>'`` (or with
+    double quotes) so that table-scoped policies can iterate only the named
+    catalog instead of every catalog in the metastore.
+
+    Returns the catalog name (case preserved) or None when the rule does not
+    pin a single catalog.
+    """
+    if not rule:
+        return None
+    # Match e.g.  t.catalog = 'safe_skies'  or  obj.catalog="prod"
+    match = re.search(r"\.catalog\s*=\s*['\"]([^'\"]+)['\"]", rule)
+    return match.group(1) if match else None
+
+
+def build_contract_table_index(db: Session) -> Dict[str, List[Dict[str, str]]]:
+    """Build a map of fully-qualified UC table -> list of contracts governing it.
+
+    The authoritative contract->source-table link is
+    ``SchemaObjectDb.physical_name`` (the ODCS ``physicalName``), which stores
+    the fully-qualified ``catalog.schema.table``. A contract may have multiple
+    schema objects, so it can appear under several keys.
+
+    Assumption: ``physical_name`` is treated as a **fully-qualified**
+    ``catalog.schema.table``. Contracts whose ``physicalName`` is a bare /
+    non-FQN name won't match any UC table key and will surface as
+    ``contract_count=0`` (a false "ungoverned" reading). Infer-from-Catalog and
+    the AI generator always emit FQNs; hand-authored non-FQN contracts are the
+    edge case (fuzzy matching is a follow-up).
+
+    Returns:
+        ``{ "catalog.schema.table" (lowercased): [{contract_id, contract_name}, ...] }``
+    """
+    from src.db_models.data_contracts import DataContractDb, SchemaObjectDb
+
+    index: Dict[str, List[Dict[str, str]]] = {}
+    # Single join query avoids the N+1 that lazy="select" schema_objects would
+    # cause when iterating every contract.
+    rows = (
+        db.query(
+            SchemaObjectDb.physical_name,
+            DataContractDb.id,
+            DataContractDb.name,
+        )
+        .join(DataContractDb, SchemaObjectDb.contract_id == DataContractDb.id)
+        .all()
+    )
+    for physical_name, contract_id, contract_name in rows:
+        if not physical_name:
+            continue
+        key = physical_name.strip().lower()
+        if not key:
+            continue
+        index.setdefault(key, []).append(
+            {"contract_id": contract_id, "contract_name": contract_name}
+        )
+    return index
 
 
 class ComplianceManager:
@@ -507,7 +569,25 @@ class ComplianceManager:
             # Create entity iterator
             from src.common.workspace_client import get_workspace_client
             ws = get_workspace_client()
-            entity_iterator = create_entity_iterator(db=db, workspace_client=ws)
+
+            # Build the contract->table coverage index and resolve the single
+            # target catalog (if any) so table objects are enriched with
+            # contract_count/contract_names and UC iteration stays scoped.
+            contract_table_index = build_contract_table_index(db)
+            target_catalog = parse_target_catalog(policy.rule)
+            if not target_catalog:
+                logger.warning(
+                    "Compliance policy '%s' has no single-catalog filter; UC "
+                    "iteration is unscoped across ALL catalogs (slow). Add a "
+                    "`.catalog = '<name>'` clause to scope it.",
+                    policy.name,
+                )
+            entity_iterator = create_entity_iterator(
+                db=db,
+                workspace_client=ws,
+                contract_table_index=contract_table_index,
+                target_catalog=target_catalog,
+            )
 
             # Parse entity filter
             entity_filter = parse_entity_filter(policy.rule)
