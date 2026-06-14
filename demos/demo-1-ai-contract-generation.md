@@ -311,3 +311,16 @@ dead air, no cover narration. It also upgrades the story: not "watch a spinner" 
   time, not before the talk.
 - Pre-record/pin still recommended for a deterministic take; for a live take, kicking off
   first is *safer* (more buffer to finish) as long as the prompt is a clean one-shot.
+### Flags cleared (2026-06-14)
+- **I-8 / T2 table -> `safe_skies.flight_ops.adsb_v2_raw`** (raw ADS-B telemetry,
+  uncontracted; drafts in one shot). `adsb_v2` is governed by `live_flights`, so don't use it.
+- **Beat 4 quality (I-2) -> manual Add Rule.** Confirmed it persists once a schema exists
+  (Quality Rules 0->1); the demo order (infer -> Add Rule) satisfies that. *(Minor UX nit:
+  Add Rule on a schema-less contract opens the dialog but silently no-ops -- add the schema
+  first.)* **DQX Profile is NOT a demo beat:** it's a remote Databricks job that writes back
+  to the metadata DB, which can't reach local Postgres (`POSTGRES_HOST=localhost`) -- so it
+  can't run in the local recording setup, and it's slower than Ask Ontos regardless. It's a
+  deployed-only capability.
+- **Beat 5 ODCS YAML (I-11) -> confirmed.** View / Export ODCS -> **View ODCS** renders the
+  ODCS YAML with Copy/Download. *(Contracts inferred before the I-1 fix still show
+  `ColumnTypeName.STRING` in the YAML -- record with freshly-inferred contracts.)*
