@@ -93,7 +93,7 @@ The contract must include ALL of the following sections, populated meaningfully:
   - servers: one entry with type="databricks", catalog, schema, server name
   - schema: one entry per physical table with name, physicalName, physicalType="table",
     description, businessName, tags, and a `properties` array with one entry per column
-  - For each column in `properties`: name, logicalType (string/integer/number/boolean/date),
+  - For each column in `properties`: name, logicalType (string/integer/number/boolean/date/timestamp),
     physicalType (the source type, lowercased), description (write something meaningful inferred from
     the column name + sample values), required (true for FK-like or non-null-in-samples columns),
     classification ("Public"/"Internal"/"Restricted"), and where applicable: unique, examples (up to 3),
@@ -161,7 +161,7 @@ def _inspect_columns(ws: WorkspaceClient, catalog: str, schema: str, table: str)
         cols.append({
             "name": c.name,
             "type_text": (c.type_text or "").lower(),
-            "type_name": str(c.type_name) if c.type_name else "",
+            "type_name": c.type_name.value if c.type_name else "",
             "nullable": bool(c.nullable),
             "comment": c.comment or "",
             "position": c.position,

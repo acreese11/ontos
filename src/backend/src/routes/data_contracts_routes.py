@@ -185,9 +185,63 @@ async def approve_contract(
         return {'status': updated.status}
     except HTTPException:
         raise
+    except ValueError as e:
+        # Invalid status transition from the state machine — graceful client error.
+        logger.warning("Invalid transition approving contract_id=%s: %s", contract_id, e)
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.exception("Approve contract failed for contract_id=%s", contract_id)
         raise HTTPException(status_code=500, detail="Failed to approve contract")
+
+
+@router.post('/data-contracts/{contract_id}/start-review')
+async def start_review_contract(
+    contract_id: str,
+    request: Request,
+    db: DBSessionDep,
+    audit_manager: AuditManagerDep,
+    current_user: AuditCurrentUserDep,
+    manager: DataContractsManager = Depends(get_data_contracts_manager),
+    _: bool = Depends(ApprovalChecker('CONTRACTS')),
+):
+    """Start steward review (PROPOSED → UNDER_REVIEW)."""
+    try:
+        # Check valid source status
+        contract = data_contract_repo.get(db, id=contract_id)
+        if not contract:
+            raise HTTPException(status_code=404, detail="Contract not found")
+        from_status = (contract.status or '').lower()
+        if from_status != 'proposed':
+            raise HTTPException(status_code=409, detail=f"Invalid transition from {contract.status} to UNDER_REVIEW")
+
+        # Business logic now in manager
+        updated = manager.transition_status(
+            db=db,
+            contract_id=contract_id,
+            new_status='under_review',
+            current_user=current_user.username if current_user else None
+        )
+
+        # Audit
+        audit_manager.log_action(
+            db=db,
+            username=current_user.username if current_user else 'anonymous',
+            ip_address=request.client.host if request.client else None,
+            feature='data-contracts',
+            action='START_REVIEW',
+            success=True,
+            details={'contract_id': contract_id, 'from': from_status, 'to': updated.status}
+        )
+        return {'status': updated.status}
+    except HTTPException:
+        raise
+    except ValueError as e:
+        # Invalid status transition from the state machine — graceful client error.
+        logger.warning("Invalid transition starting review contract_id=%s: %s", contract_id, e)
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception("Start review failed for contract_id=%s", contract_id)
+        raise HTTPException(status_code=500, detail="Failed to start review")
 
 
 @router.post('/data-contracts/{contract_id}/reject')
@@ -231,6 +285,10 @@ async def reject_contract(
         return {'status': updated.status}
     except HTTPException:
         raise
+    except ValueError as e:
+        # Invalid status transition from the state machine — graceful client error.
+        logger.warning("Invalid transition rejecting contract_id=%s: %s", contract_id, e)
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.exception("Reject contract failed for contract_id=%s", contract_id)
         raise HTTPException(status_code=500, detail="Failed to reject contract")
@@ -2375,7 +2433,8 @@ async def start_profiling(
         return result
     except ValueError as e:
         logger.error("Validation error starting profiling for contract %s: %s", contract_id, e)
-        raise HTTPException(status_code=400, detail="Invalid profiling request")
+        # Surface the real cause (e.g. workflow-not-installed guidance) to the client.
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error("Failed to start profiling for contract %s", contract_id, exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to start profiling")

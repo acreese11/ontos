@@ -259,6 +259,62 @@ def map_logical_type_to_column_type(logical_type: str) -> ColumnTypeName:
     return ColumnTypeName.STRING
 
 
+def map_column_type_to_logical_type(type_name) -> str:
+    """Map a Databricks ColumnTypeName (enum or string) to an ODCS logical type.
+
+    This is the inverse of `map_logical_type_to_column_type`. It is used when
+    inferring a data contract from an existing table so the emitted
+    `logicalType` is a valid ODCS value (string|integer|number|boolean|date|
+    array|object) rather than a leaked Python enum repr like
+    "ColumnTypeName.STRING".
+
+    Args:
+        type_name: A Databricks `ColumnTypeName` enum, its string value
+            (e.g. 'STRING'), or even a leaked repr ('ColumnTypeName.STRING').
+
+    Returns:
+        ODCS logical type string. None/unknown inputs map to 'string'.
+
+    Example:
+        >>> map_column_type_to_logical_type(ColumnTypeName.LONG)
+        'integer'
+        >>> map_column_type_to_logical_type('DOUBLE')
+        'number'
+    """
+    if type_name is None:
+        return 'string'
+
+    # Normalize to an uppercased name regardless of enum-or-string input.
+    name = getattr(type_name, 'name', None)
+    if name is None:
+        name = str(type_name)
+    name = name.upper().strip()
+    # Defensively strip a leaked 'COLUMNTYPENAME.' prefix.
+    if name.startswith('COLUMNTYPENAME.'):
+        name = name.split('.', 1)[1]
+
+    if name in ('STRING', 'CHAR', 'VARCHAR', 'BINARY'):
+        return 'string'
+    if name in ('BYTE', 'SHORT', 'INT', 'LONG'):
+        return 'integer'
+    if name in ('FLOAT', 'DOUBLE', 'DECIMAL'):
+        return 'number'
+    if name == 'BOOLEAN':
+        return 'boolean'
+    if name == 'DATE':
+        return 'date'
+    if name in ('TIMESTAMP', 'TIMESTAMP_NTZ'):
+        return 'timestamp'
+    if name == 'ARRAY':
+        return 'array'
+    if name in ('MAP', 'STRUCT'):
+        return 'object'
+
+    # Default to string for None/unknown types
+    logger.warning(f"Unknown column type '{type_name}', defaulting to 'string'")
+    return 'string'
+
+
 def ensure_catalog_exists(
     ws: WorkspaceClient,
     catalog_name: str,

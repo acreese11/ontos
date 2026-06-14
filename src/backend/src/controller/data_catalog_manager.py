@@ -723,8 +723,8 @@ class DataCatalogManager:
                 for idx, col in enumerate(table.columns):
                     columns.append(ColumnInfo(
                         name=col.name,
-                        type_text=col.type_text or str(col.type_name) if col.type_name else "UNKNOWN",
-                        type_name=str(col.type_name) if col.type_name else None,
+                        type_text=col.type_text or col.type_name.value if col.type_name else "UNKNOWN",
+                        type_name=col.type_name.value if col.type_name else None,
                         position=idx,
                         nullable=col.nullable if col.nullable is not None else True,
                         comment=col.comment,

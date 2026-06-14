@@ -1574,11 +1574,25 @@ export default function DataContractDetails() {
     }
   }
 
+  const handleStartReview = async () => {
+    if (!contractId) return;
+    try {
+      // proposed -> under_review uses the dedicated start-review endpoint
+      // (proposed -> approved is an invalid backend transition)
+      const response = await post(`/api/data-contracts/${contractId}/start-review`, {});
+      if (response.error) throw new Error(response.error);
+      await fetchDetails();
+      toast({ title: 'Review started', description: 'Contract status changed to "under_review".' });
+    } catch (e: any) {
+      toast({ title: 'Error', description: e?.message || 'Failed to start review', variant: 'destructive' });
+    }
+  };
+
   const handleApprove = async () => {
     if (!contractId) return;
     try {
-      const res = await fetch(`/api/data-contracts/${contractId}/approve`, { method: 'POST' });
-      if (!res.ok) throw new Error(`Approve failed (${res.status})`);
+      const response = await post(`/api/data-contracts/${contractId}/approve`, {});
+      if (response.error) throw new Error(response.error);
       await fetchDetails();
       toast({ title: 'Approved', description: 'Contract approved.' });
     } catch (e: any) {
@@ -1601,17 +1615,9 @@ export default function DataContractDetails() {
   const handleStartProfiling = async (selectedSchemaNames: string[]) => {
     if (!contractId) return
     try {
-      const res = await fetch(`/api/data-contracts/${contractId}/profile`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ schema_names: selectedSchemaNames })
-      })
-      if (!res.ok) {
-        const errorText = await res.text()
-        throw new Error(errorText || 'Failed to start profiling')
-      }
-      await res.json()
-      toast({ 
+      const response = await post(`/api/data-contracts/${contractId}/profile`, { schema_names: selectedSchemaNames })
+      if (response.error) throw new Error(response.error)
+      toast({
         title: 'DQX Profiling Started', 
         description: 'The profiler is analyzing your data. You will be notified when complete.' 
       })
@@ -1825,7 +1831,13 @@ export default function DataContractDetails() {
         </div>
         <div className="flex items-center gap-2">
           {/* Lifecycle actions */}
-          {contract && (['proposed','under_review'].includes((contract.status || '').toLowerCase())) && (
+          {contract && (contract.status || '').toLowerCase() === 'proposed' && (
+            <>
+              <Button size="sm" variant="outline" onClick={handleStartReview}>Start Review</Button>
+              <Button size="sm" variant="destructive" onClick={handleReject}>Reject</Button>
+            </>
+          )}
+          {contract && (contract.status || '').toLowerCase() === 'under_review' && (
             <>
               <Button size="sm" variant="outline" onClick={handleApprove}>Approve</Button>
               <Button size="sm" variant="destructive" onClick={handleReject}>Reject</Button>

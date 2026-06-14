@@ -34,8 +34,13 @@ from src.models.assets import (
     UnifiedAssetType,
 )
 from src.common.logging import get_logger
+from src.common.unity_catalog_utils import map_column_type_to_logical_type
 
 logger = get_logger(__name__)
+
+# Known Databricks system/rescue columns to strip on metadata inference.
+# Matched case-insensitively against the exact column name.
+_SYSTEM_COLUMNS = {"_rescued_data", "_metadata"}
 
 
 # ============================================================================
@@ -650,18 +655,25 @@ class DatabricksConnector(AssetConnector):
             if table.columns:
                 columns = []
                 for col in table.columns:
+                    # Skip Databricks system/rescue columns (case-insensitive exact match).
+                    if col.name and col.name.lower() in _SYSTEM_COLUMNS:
+                        continue
                     columns.append(ColumnInfo(
                         name=col.name,
-                        data_type=col.type_text or str(col.type_name) if col.type_name else "unknown",
-                        logical_type=str(col.type_name) if col.type_name else None,
+                        data_type=col.type_text or col.type_name.value if col.type_name else "unknown",
+                        logical_type=map_column_type_to_logical_type(col.type_name) if col.type_name else None,
                         nullable=col.nullable if col.nullable is not None else True,
                         description=col.comment,
                         is_partition_key=col.partition_index is not None,
                     ))
-                
+
                 schema_info = SchemaInfo(
                     columns=columns,
-                    partition_columns=[c.name for c in table.columns if c.partition_index is not None] if table.columns else None,
+                    partition_columns=[
+                        c.name for c in table.columns
+                        if c.partition_index is not None
+                        and not (c.name and c.name.lower() in _SYSTEM_COLUMNS)
+                    ] if table.columns else None,
                 )
             
             # Build statistics
@@ -727,7 +739,7 @@ class DatabricksConnector(AssetConnector):
                     columns.append(ColumnInfo(
                         name=param.name,
                         data_type=param.type_text or "unknown",
-                        logical_type=str(param.type_name) if param.type_name else None,
+                        logical_type=map_column_type_to_logical_type(param.type_name) if param.type_name else None,
                         description=param.comment,
                     ))
                 schema_info = SchemaInfo(columns=columns)
