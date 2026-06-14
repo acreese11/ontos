@@ -114,12 +114,19 @@ export default function DataContracts() {
         const errorText = await response.text();
         throw new Error(`Failed to create contract: ${errorText}`);
       }
-      await fetchContracts();
-      toast({ 
-        title: 'Success', 
-        description: 'Data contract created successfully' 
+      const created = await response.json();
+      toast({
+        title: 'Success',
+        description: 'Data contract created successfully'
       });
       setOpenWizard(false); // Close the wizard on success
+      // Navigate straight to the new contract's detail page so it isn't
+      // lost on a later page of the list.
+      if (created?.id) {
+        navigate(`${pathname}/${created.id}`);
+      } else {
+        await fetchContracts();
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to create contract';
       setError(message);

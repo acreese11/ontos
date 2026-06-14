@@ -161,7 +161,7 @@ def _inspect_columns(ws: WorkspaceClient, catalog: str, schema: str, table: str)
         cols.append({
             "name": c.name,
             "type_text": (c.type_text or "").lower(),
-            "type_name": str(c.type_name) if c.type_name else "",
+            "type_name": c.type_name.value if c.type_name else "",
             "nullable": bool(c.nullable),
             "comment": c.comment or "",
             "position": c.position,

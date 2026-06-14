@@ -1574,11 +1574,35 @@ export default function DataContractDetails() {
     }
   }
 
+  const handleStartReview = async () => {
+    if (!contractId) return;
+    try {
+      // proposed -> under_review uses the direct change-status endpoint
+      // (proposed -> approved is an invalid backend transition)
+      const response = await post(`/api/data-contracts/${contractId}/change-status`, { new_status: 'under_review' });
+      if (response.error) throw new Error(response.error);
+      await fetchDetails();
+      toast({ title: 'Review started', description: 'Contract status changed to "under_review".' });
+    } catch (e: any) {
+      toast({ title: 'Error', description: e?.message || 'Failed to start review', variant: 'destructive' });
+    }
+  };
+
   const handleApprove = async () => {
     if (!contractId) return;
     try {
       const res = await fetch(`/api/data-contracts/${contractId}/approve`, { method: 'POST' });
-      if (!res.ok) throw new Error(`Approve failed (${res.status})`);
+      if (!res.ok) {
+        let detail = `Approve failed (${res.status})`;
+        try {
+          const body = await res.json();
+          detail = body?.detail || body?.error || body?.message || detail;
+        } catch {
+          const text = await res.text().catch(() => '');
+          if (text) detail = text;
+        }
+        throw new Error(detail);
+      }
       await fetchDetails();
       toast({ title: 'Approved', description: 'Contract approved.' });
     } catch (e: any) {
@@ -1607,8 +1631,15 @@ export default function DataContractDetails() {
         body: JSON.stringify({ schema_names: selectedSchemaNames })
       })
       if (!res.ok) {
-        const errorText = await res.text()
-        throw new Error(errorText || 'Failed to start profiling')
+        let detail = `Failed to start profiling (${res.status})`
+        try {
+          const body = await res.json()
+          detail = body?.detail || body?.error || body?.message || detail
+        } catch {
+          const text = await res.text().catch(() => '')
+          if (text) detail = text
+        }
+        throw new Error(detail)
       }
       await res.json()
       toast({ 
@@ -1825,7 +1856,13 @@ export default function DataContractDetails() {
         </div>
         <div className="flex items-center gap-2">
           {/* Lifecycle actions */}
-          {contract && (['proposed','under_review'].includes((contract.status || '').toLowerCase())) && (
+          {contract && (contract.status || '').toLowerCase() === 'proposed' && (
+            <>
+              <Button size="sm" variant="outline" onClick={handleStartReview}>Start Review</Button>
+              <Button size="sm" variant="destructive" onClick={handleReject}>Reject</Button>
+            </>
+          )}
+          {contract && (contract.status || '').toLowerCase() === 'under_review' && (
             <>
               <Button size="sm" variant="outline" onClick={handleApprove}>Approve</Button>
               <Button size="sm" variant="destructive" onClick={handleReject}>Reject</Button>

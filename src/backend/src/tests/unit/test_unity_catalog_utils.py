@@ -13,6 +13,7 @@ from src.common.unity_catalog_utils import (
     sanitize_uc_identifier,
     sanitize_postgres_identifier,
     map_logical_type_to_column_type,
+    map_column_type_to_logical_type,
 )
 
 
@@ -219,4 +220,55 @@ class TestUnityCatalogUtils:
         assert map_logical_type_to_column_type("unknown_type") == ColumnTypeName.STRING
         assert map_logical_type_to_column_type("") == ColumnTypeName.STRING
         assert map_logical_type_to_column_type(None) == ColumnTypeName.STRING
+
+    # map_column_type_to_logical_type tests (inverse mapper)
+    def test_map_column_type_string(self):
+        """Test mapping STRING-family column types to 'string'."""
+        assert map_column_type_to_logical_type(ColumnTypeName.STRING) == "string"
+        assert map_column_type_to_logical_type(ColumnTypeName.CHAR) == "string"
+        assert map_column_type_to_logical_type("VARCHAR") == "string"
+        assert map_column_type_to_logical_type(ColumnTypeName.BINARY) == "string"
+
+    def test_map_column_type_integer(self):
+        """Test mapping integer-family column types to 'integer'."""
+        assert map_column_type_to_logical_type(ColumnTypeName.LONG) == "integer"
+        assert map_column_type_to_logical_type(ColumnTypeName.INT) == "integer"
+        assert map_column_type_to_logical_type(ColumnTypeName.SHORT) == "integer"
+        assert map_column_type_to_logical_type(ColumnTypeName.BYTE) == "integer"
+
+    def test_map_column_type_number(self):
+        """Test mapping numeric-family column types to 'number'."""
+        assert map_column_type_to_logical_type(ColumnTypeName.DOUBLE) == "number"
+        assert map_column_type_to_logical_type(ColumnTypeName.FLOAT) == "number"
+        assert map_column_type_to_logical_type(ColumnTypeName.DECIMAL) == "number"
+
+    def test_map_column_type_boolean(self):
+        """Test mapping BOOLEAN column type to 'boolean'."""
+        assert map_column_type_to_logical_type(ColumnTypeName.BOOLEAN) == "boolean"
+
+    def test_map_column_type_date(self):
+        """Test mapping date/timestamp column types to 'date'."""
+        assert map_column_type_to_logical_type(ColumnTypeName.TIMESTAMP) == "date"
+        assert map_column_type_to_logical_type(ColumnTypeName.DATE) == "date"
+        assert map_column_type_to_logical_type(ColumnTypeName.TIMESTAMP_NTZ) == "date"
+
+    def test_map_column_type_array(self):
+        """Test mapping ARRAY column type to 'array'."""
+        assert map_column_type_to_logical_type(ColumnTypeName.ARRAY) == "array"
+
+    def test_map_column_type_object(self):
+        """Test mapping STRUCT/MAP column types to 'object'."""
+        assert map_column_type_to_logical_type(ColumnTypeName.STRUCT) == "object"
+        assert map_column_type_to_logical_type(ColumnTypeName.MAP) == "object"
+
+    def test_map_column_type_none(self):
+        """Test mapping None defaults to 'string'."""
+        assert map_column_type_to_logical_type(None) == "string"
+
+    def test_map_column_type_plain_string_input(self):
+        """Test passing a plain string (enum value or leaked repr) works."""
+        assert map_column_type_to_logical_type("STRING") == "string"
+        assert map_column_type_to_logical_type("long") == "integer"
+        assert map_column_type_to_logical_type("ColumnTypeName.DOUBLE") == "number"
+        assert map_column_type_to_logical_type("unknown_type") == "string"
 

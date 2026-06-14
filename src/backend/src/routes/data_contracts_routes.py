@@ -185,6 +185,10 @@ async def approve_contract(
         return {'status': updated.status}
     except HTTPException:
         raise
+    except ValueError as e:
+        # Invalid status transition from the state machine — graceful client error.
+        logger.warning("Invalid transition approving contract_id=%s: %s", contract_id, e)
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.exception("Approve contract failed for contract_id=%s", contract_id)
         raise HTTPException(status_code=500, detail="Failed to approve contract")
@@ -2375,7 +2379,8 @@ async def start_profiling(
         return result
     except ValueError as e:
         logger.error("Validation error starting profiling for contract %s: %s", contract_id, e)
-        raise HTTPException(status_code=400, detail="Invalid profiling request")
+        # Surface the real cause (e.g. workflow-not-installed guidance) to the client.
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error("Failed to start profiling for contract %s", contract_id, exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to start profiling")
