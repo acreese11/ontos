@@ -247,10 +247,16 @@ class TestUnityCatalogUtils:
         assert map_column_type_to_logical_type(ColumnTypeName.BOOLEAN) == "boolean"
 
     def test_map_column_type_date(self):
-        """Test mapping date/timestamp column types to 'date'."""
-        assert map_column_type_to_logical_type(ColumnTypeName.TIMESTAMP) == "date"
+        """Test mapping DATE column type to 'date'."""
         assert map_column_type_to_logical_type(ColumnTypeName.DATE) == "date"
-        assert map_column_type_to_logical_type(ColumnTypeName.TIMESTAMP_NTZ) == "date"
+
+    def test_map_column_type_timestamp(self):
+        """Test mapping TIMESTAMP/TIMESTAMP_NTZ column types to 'timestamp'.
+
+        ODCS v3.1 distinguishes date-only from timestamp; DATE → 'date'
+        while TIMESTAMP and TIMESTAMP_NTZ → 'timestamp'."""
+        assert map_column_type_to_logical_type(ColumnTypeName.TIMESTAMP) == "timestamp"
+        assert map_column_type_to_logical_type(ColumnTypeName.TIMESTAMP_NTZ) == "timestamp"
 
     def test_map_column_type_array(self):
         """Test mapping ARRAY column type to 'array'."""

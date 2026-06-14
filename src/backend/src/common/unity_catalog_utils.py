@@ -301,8 +301,10 @@ def map_column_type_to_logical_type(type_name) -> str:
         return 'number'
     if name == 'BOOLEAN':
         return 'boolean'
-    if name in ('DATE', 'TIMESTAMP', 'TIMESTAMP_NTZ'):
+    if name == 'DATE':
         return 'date'
+    if name in ('TIMESTAMP', 'TIMESTAMP_NTZ'):
+        return 'timestamp'
     if name == 'ARRAY':
         return 'array'
     if name in ('MAP', 'STRUCT'):

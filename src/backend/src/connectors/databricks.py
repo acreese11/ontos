@@ -660,7 +660,7 @@ class DatabricksConnector(AssetConnector):
                         continue
                     columns.append(ColumnInfo(
                         name=col.name,
-                        data_type=col.type_text or str(col.type_name) if col.type_name else "unknown",
+                        data_type=col.type_text or col.type_name.value if col.type_name else "unknown",
                         logical_type=map_column_type_to_logical_type(col.type_name) if col.type_name else None,
                         nullable=col.nullable if col.nullable is not None else True,
                         description=col.comment,

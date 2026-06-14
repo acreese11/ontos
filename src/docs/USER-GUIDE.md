@@ -1303,8 +1303,15 @@ Link individual columns to business properties.
 
 #### 3. Under Review
 
-- **Who**: Data Steward
-- **Actions**: Review contract for:
+- **Who**: Data Steward (Start Review is steward-gated)
+- **Actions**: A Data Steward **Starts Review**, transitioning the contract from Proposed to Under Review
+
+**How to Start Review**:
+1. Open a contract in Proposed status
+2. Click **Start Review** (visible to Data Stewards only)
+3. Contract transitions to Under Review
+
+Once under review, the steward evaluates the contract for:
   - Schema completeness and clarity
   - Semantic alignment to business concepts
   - Compliance with data standards
@@ -1320,8 +1327,8 @@ Link individual columns to business properties.
 
 #### 4. Approved
 
-- **Who**: Data Steward
-- **Actions**: Approve or request changes
+- **Who**: Data Steward (Approve is steward-gated)
+- **Actions**: From Under Review, the steward **Approves** (Under Review → Approved) or **Rejects** (returns the contract to Draft for revisions)
 - **Visibility**: Organization-wide (metadata)
 
 **What Happens**:
