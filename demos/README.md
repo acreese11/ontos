@@ -1,22 +1,22 @@
 # Safe Skies — Demo Walkthrough Scripts
 
-Presenter scripts for the DAIS 2026 "Safe Skies" demos. One file per beat.
-Each script is written for a **live dress rehearsal** against the deployed app,
-so you can rehearse the clicks + narration before recording with Michael.
+Presenter scripts for the DAIS 2026 "Safe Skies" demos. One file per lifecycle stage.
+Each script is written for a **live dress rehearsal** against the deployed app, so you
+can rehearse the clicks + narration before recording with Michael.
 
-## The story these beats tell — the Four Moves
+## The story these beats tell — the lifecycle
 
 ```
-Standardize   →   Generate      →   Enforce        →   Discover
-ODCS v3.1         LLM-assisted      DQX reads ODCS     Ontos marketplace
-ODPS              drafting in       natively           + ontology + Genie
-                  Ontos
+Standardize  →  Author        →  Enforce         →  Discover          →  Maintain
+ODCS/ODPS       AI drafts the     DQX reads ODCS     Ontos marketplace    Contract Coverage
+open spec       contract in       natively in the    + subscriptions      + notify loop + drift
+                Ontos             pipeline
         └──── Ontos is the substrate (Lakebase Postgres + Unity Catalog) ────┘
 ```
 
-Ontos is **substrate**, not one of the moves: it's the *home* for Standardize,
-the *interface* for Generate, the *consumer* of Enforce results, and the
-*engine* of Discover.
+Ontos is **substrate**, not a step: the *home* for Standardize, the *interface* for
+Author, the *consumer* of Enforce results, the *engine* of Discover, and the *watchdog*
+for Maintain.
 
 ## Shared pre-flight (do once before a rehearsal session)
 
@@ -48,57 +48,40 @@ the *interface* for Generate, the *consumer* of Enforce results, and the
 5. **Caption bug:** the first ~3s of every recording shows "Synthetic flight
    telemetry — not real-world aviation data."
 
-## Readiness at a glance (from the 2026-05-29 dress rehearsal)
+## Readiness at a glance
 
 | Demo | Beat | State |
 |------|------|-------|
-| [1](demo-1-ai-contract-generation.md) | AI contract generation | ✅ ready |
-| [2](demo-2-marketplace-subscribe.md) | Marketplace + subscribe | ⚠️ seed subscriptions first |
-| [3](demo-3-dqx-quarantine.md) | DQX quarantine | ✅ ready |
-| [5](demo-5-genie-trust-signals.md) | Genie w/ trust signals | 🔴 **LIKELY CUT** — leaning toward cutting Genie (also ⚠️ unverified, likely API drift) |
-| [Maintain](demo-maintain.md) | Contract Coverage (+ notify loop, drift) | ✅ Coverage built + validated; notify loop ❌ not built; drift ❌ not built (cut candidate) |
+| [1 · Author](demo-1-author-contract-generation.md) | AI contract authoring (manual + Ask Ontos) | ✅ ready |
+| [2 · Enforce](demo-2-enforce-dqx-quarantine.md) | DQX quarantine | ✅ ready |
+| [3 · Discover](demo-3-discover-marketplace-subscribe.md) | Marketplace + subscribe | ⚠️ seed subscriptions first |
+| [4 · Maintain](demo-4-maintain.md) | Contract Coverage (+ notify loop, drift) | ✅ Coverage built + validated; notify loop ❌ not built; drift ❌ not built (cut candidate) |
 
-See `../plans/dais-demo-readiness.md` for the full rehearsal findings.
+(Genie demo cut.) See `../plans/dais-demo-readiness.md` for the full rehearsal findings.
 
 ## Timing reconciliation (vs the deck)
 
-**Slot: 40 minutes**, co-presented (Alan + Michael), 2 min reserved for Q&A.
-Demos are pre-recorded videos, narrated live, in two clusters:
-- Slides 16–18 → Demos **1, 2, Maintain·notify-loop**
-- Slides 21–23 → Demos **3, Maintain·drift, 5**
+**Slot: 40 minutes**, co-presented (Alan + Michael), 2 min reserved for Q&A. Demos are
+pre-recorded videos, narrated live, in **lifecycle order: 1 Author → 2 Enforce → 3
+Discover → 4 Maintain**. (Reconcile the deck's slide order to match this flow.)
 
-(The Maintain beats — notify loop and drift — live in `demo-maintain.md`,
-anchored by the built Contract Coverage spine.)
+| Demo | Allocated | Fits? |
+|------|-----------|-------|
+| 1 · Author (contract authoring) | ~5:00 | ✅ if scripted tight + LLM output pinned |
+| 2 · Enforce (DQX quarantine) | ~2:00 | ✅ |
+| 3 · Discover (marketplace + subscribe) | ~2:00 | ✅ |
+| 4 · Maintain (Coverage spine) | ~2:00 | ✅ Coverage built; notify loop + drift ❌ not built |
+| **Total video** | **~11 min** | **≈28% of the 40-min talk** |
 
-| Demo | Slide | Allocated | Fits? |
-|------|-------|-----------|-------|
-| 1 contract gen | 16 | ~5:00 | ✅ if scripted tight + LLM output pinned |
-| 2 marketplace | 17 | ~2:00 | ✅ |
-| Maintain · notify loop | 18 | ~2:00 | ✅ *budget* — but ❌ not built |
-| 3 DQX quarantine | 21 | ~2:00 | ✅ |
-| Maintain · monitor drift | 22 | ~2:30 | ❌ not built (cut candidate) |
-| 5 Genie | 23 | ~2:00 | 🔴 likely cut (⚠️ if kept + verified) |
-| **Total video** | | **~15.5 min** | **≈39% of the 40-min talk** |
+> The Maintain beats (Contract Coverage, notification loop, drift) are consolidated in
+> [`demo-4-maintain.md`](demo-4-maintain.md). Contract Coverage is the built spine; the
+> notify-loop and drift beats are unbuilt, folded into that file.
 
-> The Maintain beats (Contract Coverage, notification loop, drift) are consolidated
-> in [`demo-maintain.md`](demo-maintain.md). Contract Coverage is the built spine;
-> the notify-loop and drift rows above are the unbuilt beats folded into that file.
+**Per-demo budgets are appropriate** — each fits its slot. With Genie cut and only the
+built Maintain spine, demo video is **~11 min (~28%)** of the 40-min co-presented slot —
+a healthy ratio with room for live co-narration drift.
 
-**Per-demo budgets are appropriate** — each beat fits its slot (see the timing
-table in each script). **The structural risk is the aggregate:** 15.5 min of
-video is a high share of a 40-min co-presented slot, and live co-narration over
-video tends to drift long.
-
-**Recommended adjustment — cut the Maintain drift beat (Monitor, 2.5 min):**
-- It's the **biggest unbuilt beat** (least likely to be ready) *and* the
-  **second-longest video**. Cutting drops demo video to **~13 min (~33%)** — a
-  healthier ratio — and removes the largest build risk.
-- Keep Slide 22 as a **static talking slide**: Michael makes the drift point
-  verbally in ~20–30s. The concept lands without the video.
-- This single cut fixes both the timing share *and* the readiness gap at once.
-
-**Then prioritize the build runway on the Maintain notify-loop > Demo 5:** the
-notify-loop (trust loop) is the most differentiated beat and worth building;
-Demo 5 (Genie) is a smaller shape-fix on an endpoint that already exists — and is
-now leaning toward a cut. Both fit their 2-min budgets once working.
-
+**Build runway, if pursuing the unbuilt Maintain beats:** the **notify-loop (trust loop)**
+is the most differentiated and worth building first; the **drift beat** is the largest
+build and the cut candidate — keep its slide as a static talking point (~20–30s verbal)
+rather than a video if it isn't ready.
