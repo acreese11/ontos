@@ -124,3 +124,31 @@ def chat_completion(client: OpenAI, **kwargs):
             kwargs.pop("temperature", None)
             return client.chat.completions.create(**kwargs)
         raise
+
+
+def stream_chat_completion(client: OpenAI, **kwargs):
+    """Streaming variant of ``chat_completion`` — yields content deltas (str).
+
+    Same temperature-tolerance contract as ``chat_completion``: Databricks-hosted
+    Claude reasoning endpoints reject ``temperature`` with a 400 raised at
+    ``create()`` time (before iteration begins, verified against
+    databricks-claude-opus-4-7), so the retry-without-temperature must wrap the
+    ``create(stream=True)`` call, not the iteration.
+
+    Yields only non-empty ``choices[0].delta.content`` strings; callers accumulate
+    them into the full response text.
+    """
+    kwargs["stream"] = True
+    try:
+        stream = client.chat.completions.create(**kwargs)
+    except Exception as e:
+        msg = str(e)
+        if "temperature" in kwargs and "temperature" in msg and "support" in msg.lower():
+            logger.info("Endpoint rejected 'temperature'; retrying stream without it.")
+            kwargs.pop("temperature", None)
+            stream = client.chat.completions.create(**kwargs)
+        else:
+            raise
+    for chunk in stream:
+        if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content:
+            yield chunk.choices[0].delta.content
