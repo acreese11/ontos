@@ -170,6 +170,65 @@ beat most worth *building* rather than cutting; drift is the cleanest thing to c
 
 ---
 
+## Trust-loop placement & cross-demo 5-min plan (decided in chat, 2026-06-15)
+
+**The trust loop spans two demos — by design.**
+- **Subscribe happens in Discover** (demo 3, Michael): the consumer finds *Global Flight
+  Ops*, inspects the contract, and **subscribes → registers for violation notifications.**
+- **Loop *closure* happens here in Maintain** (Beat 2): a DQX violation fires → the owner
+  **and that same subscriber from Discover** are notified → "the consumer didn't have to
+  ask if the data broke; they were told."
+
+**Keep them apart on purpose.** Discover = *find & trust*; Maintain = *operate & watch
+over time*. The gap between subscribing and being alerted mirrors real life (subscribe
+once, alerted weeks later). Do **not** collapse the notification into the end of Discover.
+
+**Mechanical dependency:** the identity that subscribes in Discover must be the same inbox
+that lights up here. (demo-3 already flags "use the same consumer identity.")
+
+**Why building the trust-loop is the highest-leverage move:** it earns screen time in
+*both* demos. In Discover the Subscribe click gains visible stakes ("this registration is
+what pages me when it breaks"); here it's the emotional peak of the whole talk. Without it,
+Discover is ~3:30 (subscribe with no payoff) and Maintain is ~2:30 (Coverage + a verbal
+promise) — **that's why neither cleanly fills 5 min today; the missing build is the shared
+payoff.**
+
+**Cross-demo timing (if trust-loop is built):**
+
+| Discover (~4:30) | Maintain (~5:00) |
+|---|---|
+| search (0:40) | Contract Coverage — governance landscape (2:00) |
+| trust signals (0:40) | transition: "coverage isn't enough — contracts must hold at runtime" (0:20) |
+| inspect contract before trusting (0:50) | **trust-loop closure: DQX violation → owner + subscriber notified (1:45)** |
+| subscribe → "this is the alert registration" (0:45) | drift — built *or* ~0:45 verbal + screenshot |
+| what subscription buys (version lock) (0:45) | |
+| ontology beat (0:30) | |
+
+**The technique that fills 5 min with substance (not padding) = cross-demo threading:**
+- Discover→Maintain: "you'll see this subscription fire in a moment."
+- Maintain→Discover: "remember the consumer who subscribed in the marketplace."
+- Maintain→Author: Coverage flags `adsb_v2_raw` as *uncontracted* — the exact table the
+  Author demo drafts a contract for. Closes Author→Maintain too.
+
+## Open items (re Maintain + Discovery)
+
+1. **Build the trust-loop (Beat 2)** — highest ROI; fixes the quality of *two* demos and
+   delivers the talk's thesis live. Fires on a DQX violation via `NotificationsManager` →
+   owner + all subscribers. Scope: confirm it's recordable end-to-end locally (the
+   subscriber from Discover must receive it). See **Appendix A** for build gaps.
+2. **Drift (Beat 3)** — remains optional / cut-candidate. Alan may build the Lakehouse
+   Monitor; if not, keep deck slide 21 as a ~30–45s verbal + screenshot. See **Appendix B**.
+3. **→ demo-3 (Discover):** scope **using "Ask Ontos" for *discovery*** into the Discovery
+   demo — i.e. ask the copilot to find/answer about products as a discovery mechanism
+   alongside the marketplace search (per Alan, 2026-06-15). *(Action lives in
+   `demo-3-discover-marketplace-subscribe.md`, noted here for the cross-demo thread.)*
+4. **Identity continuity** — pin the same consumer identity across demo-3 subscribe and the
+   Beat-2 notification; bake into both run-setups.
+5. **Conflict-case staging** (double-governed table) — the one Beat-1 refinement worth
+   deciding pre-talk (recipe in "Staging the conflict case" above).
+
+---
+
 # Appendix A — Notification loop (demo-4, ❌ not built)
 
 > Originally **Slide 18** · the **Enforce → Discover** join · **~2 min** · third of
