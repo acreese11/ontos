@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Send, Loader2, Sparkles, X, MessageSquare, Plus, Trash2 } from 'lucide-react';
+import { Send, Loader2, Sparkles, X, MessageSquare, Plus, Trash2, Check, CircleDot } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
@@ -15,13 +15,60 @@ import { useToast } from '@/hooks/use-toast';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import LLMConsentDialog, { hasLLMConsent } from '@/components/common/llm-consent-dialog';
-import { fetchLLMStatus, fetchSessions, sendMessage, deleteSession } from '@/components/search/llm-search-api';
+import { fetchLLMStatus, fetchSessions, sendMessage, deleteSession, streamContractDraft } from '@/components/search/llm-search-api';
 import { useCopilotStore, type CopilotPageContext } from '@/stores/copilot-store';
 import { useCopilotQuestions } from '@/hooks/use-copilot-questions';
 import type { LLMConfig } from '@/types/llm';
-import type { ChatMessage, LLMSearchStatus, SessionSummary } from '@/types/llm-search';
+import type { ChatMessage, ContractDraftStage, LLMSearchStatus, SessionSummary } from '@/types/llm-search';
 
 const WELCOME_DISMISSED_KEY = 'copilot-welcome-dismissed';
+
+// "Draft a data contract for cat.sch.tbl" — requires a fully-qualified 3-part
+// identifier so we only divert to the streaming generator on a confident match;
+// anything else falls through to the normal agent chat.
+const CONTRACT_DRAFT_INTENT =
+  /\b(?:draft|generate|create|author)\b[^.]*?\bcontract\b[^A-Za-z0-9]*(?:for\s+)?[`"']?([A-Za-z0-9_]+)\.([A-Za-z0-9_]+)\.([A-Za-z0-9_]+)[`"']?/i;
+
+const STAGE_LABELS: Record<string, string> = {
+  inspect_columns: 'Inspecting columns',
+  sample_rows: 'Sampling rows',
+  column_stats: 'Computing column stats',
+  llm_call: 'Drafting with AI',
+  parse_validate: 'Validating contract',
+};
+
+function upsertStage(stages: ContractDraftStage[], e: ContractDraftStage): ContractDraftStage[] {
+  const idx = stages.findIndex((s) => s.step === e.step);
+  if (idx === -1) return [...stages, e];
+  const next = [...stages];
+  next[idx] = { ...next[idx], ...e };
+  return next;
+}
+
+function ContractStageChecklist({ stages, streaming }: { stages: ContractDraftStage[]; streaming?: boolean }) {
+  if (!stages.length) return null;
+  return (
+    <ul className="mb-2 space-y-1">
+      {stages.map((s) => {
+        const done = s.status === 'done';
+        return (
+          <li key={s.step} className="flex items-center gap-2 text-xs">
+            {done ? (
+              <Check className="w-3 h-3 text-emerald-500 shrink-0" />
+            ) : streaming ? (
+              <Loader2 className="w-3 h-3 animate-spin text-violet-500 shrink-0" />
+            ) : (
+              <CircleDot className="w-3 h-3 text-muted-foreground shrink-0" />
+            )}
+            <span className={done ? 'text-muted-foreground' : 'font-medium'}>
+              {STAGE_LABELS[s.step] ?? s.step}
+            </span>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
 
 function buildContextPrefix(ctx: CopilotPageContext): string {
   let prefix = `[Context: User is on the "${ctx.pageName}" page at ${ctx.pageUrl}`;
@@ -53,6 +100,9 @@ function CopilotMessage({ message }: { message: ChatMessage }) {
           <p className="whitespace-pre-wrap">{message.content}</p>
         ) : (
           <div className="prose prose-sm dark:prose-invert max-w-none [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
+            {message.stages && (
+              <ContractStageChecklist stages={message.stages} streaming={message.streaming} />
+            )}
             <ReactMarkdown
               remarkPlugins={[remarkGfm]}
               components={{
@@ -79,6 +129,14 @@ function CopilotMessage({ message }: { message: ChatMessage }) {
             >
               {message.content || ''}
             </ReactMarkdown>
+            {message.contractUrl && (
+              <a
+                href={message.contractUrl}
+                className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-violet-600 dark:text-violet-400 hover:underline no-underline"
+              >
+                Open draft in contract editor →
+              </a>
+            )}
           </div>
         )}
       </div>
@@ -143,12 +201,88 @@ export default function CopilotPanel() {
     localStorage.setItem(WELCOME_DISMISSED_KEY, 'true');
   };
 
+  const handleStreamContract = async (
+    catalog: string,
+    schema: string,
+    table: string,
+    rawText: string,
+  ) => {
+    const userMessage: ChatMessage = {
+      id: `temp-${Date.now()}`,
+      role: 'user',
+      content: rawText,
+      timestamp: new Date().toISOString(),
+    };
+    const asstId = `stream-${Date.now()}`;
+    const asstMessage: ChatMessage = {
+      id: asstId,
+      role: 'assistant',
+      content: '',
+      streaming: true,
+      stages: [],
+      timestamp: new Date().toISOString(),
+    };
+    setMessages((prev) => [...prev, userMessage, asstMessage]);
+    setInput('');
+    setIsLoading(true);
+
+    const patch = (fn: (m: ChatMessage) => ChatMessage) =>
+      setMessages((prev) => prev.map((m) => (m.id === asstId ? fn(m) : m)));
+
+    let draft = '';
+    try {
+      await streamContractDraft(
+        { catalog, schema, table },
+        {
+          onStage: (s) => patch((m) => ({ ...m, stages: upsertStage(m.stages ?? [], s as ContractDraftStage) })),
+          onToken: (delta) => {
+            draft += delta;
+            patch((m) => ({ ...m, content: '```json\n' + draft + '\n```' }));
+          },
+          onResult: (r) => {
+            const c = r.contract as { name?: string; version?: string } | null;
+            const header = c?.name
+              ? `**Drafted \`${c.name}\`${c.version ? ` v${c.version}` : ''}** — review and refine below.\n\n`
+              : '**Draft complete.**\n\n';
+            const body = c ? '```json\n' + JSON.stringify(c, null, 2) + '\n```' : '';
+            patch((m) => ({
+              ...m,
+              streaming: false,
+              content: header + body,
+              contractUrl: r.contract_id ? `/data-contracts/${r.contract_id}?ai-draft=true` : undefined,
+            }));
+          },
+          onExists: (e) => patch((m) => ({ ...m, streaming: false, content: e.message })),
+          onError: (msg) => {
+            patch((m) => ({ ...m, streaming: false, isError: true, content: `⚠️ ${msg}` }));
+            toast({ title: t('common:toast.error'), description: msg, variant: 'destructive' });
+          },
+        },
+      );
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : t('search:copilot.messageSendFailed');
+      patch((m) => ({ ...m, streaming: false, isError: true, content: `⚠️ ${errorMessage}` }));
+      toast({ title: t('common:toast.error'), description: errorMessage, variant: 'destructive' });
+    } finally {
+      setIsLoading(false);
+      inputRef.current?.focus();
+    }
+  };
+
   const handleSend = async () => {
     const messageContent = input.trim();
     if (!messageContent || isLoading) return;
 
     if (!hasLLMConsent(llmConfig)) {
       setShowConsentDialog(true);
+      return;
+    }
+
+    // Confident "draft a contract for cat.sch.tbl" → live streaming generator;
+    // everything else goes to the normal agent chat.
+    const draftMatch = messageContent.match(CONTRACT_DRAFT_INTENT);
+    if (draftMatch) {
+      handleStreamContract(draftMatch[1], draftMatch[2], draftMatch[3], messageContent);
       return;
     }
 
@@ -387,7 +521,7 @@ export default function CopilotPanel() {
                 {messages.map((message) => (
                   <CopilotMessage key={message.id} message={message} />
                 ))}
-                {isLoading && (
+                {isLoading && !messages.some((m) => m.streaming) && (
                   <div className="flex gap-2">
                     <div className="w-6 h-6 rounded-full bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center shrink-0">
                       <Sparkles className="w-3 h-3 text-white" />
