@@ -16,7 +16,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import LLMConsentDialog, { hasLLMConsent } from '@/components/common/llm-consent-dialog';
 import { fetchLLMStatus, fetchSessions, sendMessage, deleteSession, streamContractDraft } from '@/components/search/llm-search-api';
-import { useCopilotStore, type CopilotPageContext } from '@/stores/copilot-store';
+import { useCopilotStore, PANEL_MIN_WIDTH, type CopilotPageContext } from '@/stores/copilot-store';
 import { useCopilotQuestions } from '@/hooks/use-copilot-questions';
 import type { LLMConfig } from '@/types/llm';
 import type { ChatMessage, ContractDraftStage, LLMSearchStatus, SessionSummary } from '@/types/llm-search';
@@ -150,7 +150,8 @@ export default function CopilotPanel() {
   const { t } = useTranslation(['search', 'common']);
   const isOpen = useCopilotStore((s) => s.isOpen);
   const pageContext = useCopilotStore((s) => s.pageContext);
-  const { closePanel } = useCopilotStore((s) => s.actions);
+  const panelWidth = useCopilotStore((s) => s.panelWidth);
+  const { closePanel, setPanelWidth, setResizing } = useCopilotStore((s) => s.actions);
   const questionGroups = useCopilotQuestions();
 
   const [status, setStatus] = useState<LLMSearchStatus | null>(null);
@@ -168,26 +169,20 @@ export default function CopilotPanel() {
   const inputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
 
-  // Drag-resizable panel width — the streamed contract JSON needs room to breathe.
-  const PANEL_WIDTH_KEY = 'copilot-panel-width';
-  const PANEL_MIN = 360;
-  const [panelWidth, setPanelWidth] = useState(() => {
-    const saved = Number(localStorage.getItem(PANEL_WIDTH_KEY));
-    return saved >= PANEL_MIN ? saved : 420;
-  });
+  // Drag-resizable panel width lives in the store so the main layout can reserve
+  // matching space (otherwise the fixed panel overlays + cuts off page content).
   const startResize = (e: React.MouseEvent) => {
     e.preventDefault();
     const maxW = Math.max(480, window.innerWidth - 80); // leave a sliver of the app visible
-    let latest = panelWidth;
+    setResizing(true);
     const onMove = (ev: MouseEvent) => {
-      latest = Math.min(Math.max(window.innerWidth - ev.clientX, PANEL_MIN), maxW);
-      setPanelWidth(latest);
+      setPanelWidth(Math.min(Math.max(window.innerWidth - ev.clientX, PANEL_MIN_WIDTH), maxW));
     };
     const onUp = () => {
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
       document.body.style.userSelect = '';
-      try { localStorage.setItem(PANEL_WIDTH_KEY, String(Math.round(latest))); } catch { /* ignore */ }
+      setResizing(false);
     };
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);

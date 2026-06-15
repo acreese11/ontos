@@ -26,6 +26,8 @@ export default function Layout({ children }: LayoutProps) {
   const isSidebarCollapsed = useLayoutStore((state) => state.isSidebarCollapsed);
   const { toggleSidebar } = useLayoutStore((state) => state.actions);
   const isCopilotOpen = useCopilotStore((s) => s.isOpen);
+  const copilotWidth = useCopilotStore((s) => s.panelWidth);
+  const isCopilotResizing = useCopilotStore((s) => s.isResizing);
   const { togglePanel } = useCopilotStore((s) => s.actions);
   const [health, setHealth] = useState<HealthState | null>(null);
 
@@ -41,11 +43,16 @@ export default function Layout({ children }: LayoutProps) {
   return (
     <div className="flex min-h-screen bg-background">
       <Sidebar isCollapsed={isSidebarCollapsed} />
-      <div className={cn(
-        "flex flex-col flex-1 transition-all duration-300 ease-in-out",
-        isSidebarCollapsed ? "ml-[56px]" : "ml-[240px]",
-        isCopilotOpen && "mr-[400px]"
-      )}>
+      <div
+        className={cn(
+          "flex flex-col flex-1 ease-in-out min-w-0",
+          // No transition while actively dragging — the margin must track the panel
+          // edge 1:1, or the panel briefly overlaps page content mid-drag.
+          !isCopilotResizing && "transition-all duration-300",
+          isSidebarCollapsed ? "ml-[56px]" : "ml-[240px]"
+        )}
+        style={{ marginRight: isCopilotOpen ? copilotWidth : 0 }}
+      >
         <Header onToggleSidebar={toggleSidebar} isSidebarCollapsed={isSidebarCollapsed} />
         {showWarning && (
           <Alert variant="destructive" className="mx-6 mt-4">
