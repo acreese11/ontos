@@ -168,6 +168,32 @@ export default function CopilotPanel() {
   const inputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
 
+  // Drag-resizable panel width — the streamed contract JSON needs room to breathe.
+  const PANEL_WIDTH_KEY = 'copilot-panel-width';
+  const PANEL_MIN = 360;
+  const [panelWidth, setPanelWidth] = useState(() => {
+    const saved = Number(localStorage.getItem(PANEL_WIDTH_KEY));
+    return saved >= PANEL_MIN ? saved : 420;
+  });
+  const startResize = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const maxW = Math.max(480, window.innerWidth - 80); // leave a sliver of the app visible
+    let latest = panelWidth;
+    const onMove = (ev: MouseEvent) => {
+      latest = Math.min(Math.max(window.innerWidth - ev.clientX, PANEL_MIN), maxW);
+      setPanelWidth(latest);
+    };
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      document.body.style.userSelect = '';
+      try { localStorage.setItem(PANEL_WIDTH_KEY, String(Math.round(latest))); } catch { /* ignore */ }
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    document.body.style.userSelect = 'none';
+  };
+
   const llmConfig: LLMConfig = {
     enabled: status?.enabled ?? false,
     endpoint: status?.endpoint ?? null,
@@ -410,7 +436,18 @@ export default function CopilotPanel() {
       />
 
       {/* Panel container — fixed right side, no overlay */}
-      <div className="fixed inset-y-0 right-0 z-50 w-[400px] border-l bg-background shadow-lg flex flex-col animate-in slide-in-from-right duration-300">
+      <div
+        className="fixed inset-y-0 right-0 z-50 border-l bg-background shadow-lg flex flex-col animate-in slide-in-from-right duration-300"
+        style={{ width: panelWidth, maxWidth: '95vw' }}
+      >
+        {/* Drag handle — resize the panel relative to the main window */}
+        <div
+          onMouseDown={startResize}
+          className="absolute inset-y-0 left-0 w-1.5 -ml-0.5 cursor-col-resize z-10 group"
+          title="Drag to resize"
+        >
+          <div className="h-full w-px mx-auto bg-border group-hover:bg-violet-400 group-hover:w-0.5 transition-colors" />
+        </div>
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b shrink-0">
           <div className="flex items-center gap-2">
