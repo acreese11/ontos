@@ -23,11 +23,13 @@ import type { ChatMessage, ContractDraftStage, LLMSearchStatus, SessionSummary }
 
 const WELCOME_DISMISSED_KEY = 'copilot-welcome-dismissed';
 
-// "Draft a data contract for cat.sch.tbl" — requires a fully-qualified 3-part
-// identifier so we only divert to the streaming generator on a confident match;
-// anything else falls through to the normal agent chat.
+// "Draft a data contract for cat.sch.tbl" — the FQN must immediately follow
+// "contract [for]" so we only divert to the streaming generator on a confident
+// match; anything else (e.g. "create a contract spec — does a.b.c comply?")
+// falls through to the normal agent chat. Identifier parts match the backend
+// _IDENT_RE (leading non-digit) so the divert and the server agree.
 const CONTRACT_DRAFT_INTENT =
-  /\b(?:draft|generate|create|author)\b[^.]*?\bcontract\b[^A-Za-z0-9]*(?:for\s+)?[`"']?([A-Za-z0-9_]+)\.([A-Za-z0-9_]+)\.([A-Za-z0-9_]+)[`"']?/i;
+  /\b(?:draft|generate|create|author)\s+(?:a\s+|an\s+|the\s+)?(?:new\s+)?(?:draft\s+)?(?:data\s+)?contract\s+(?:for\s+)?[`"']?([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)\b/i;
 
 const STAGE_LABELS: Record<string, string> = {
   inspect_columns: 'Inspecting columns',
@@ -229,7 +231,18 @@ export default function CopilotPanel() {
     const patch = (fn: (m: ChatMessage) => ChatMessage) =>
       setMessages((prev) => prev.map((m) => (m.id === asstId ? fn(m) : m)));
 
+    // Batch token renders: re-running ReactMarkdown over the growing contract on
+    // every delta is O(n²). Coalesce to ~1 render / 80ms; terminal handlers
+    // cancel the pending flush and set final content.
     let draft = '';
+    let flushTimer: ReturnType<typeof setTimeout> | null = null;
+    const flushDraft = () => {
+      flushTimer = null;
+      patch((m) => ({ ...m, content: '```json\n' + draft + '\n```' }));
+    };
+    const cancelFlush = () => {
+      if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
+    };
     try {
       await streamContractDraft(
         { catalog, schema, table },
@@ -237,9 +250,10 @@ export default function CopilotPanel() {
           onStage: (s) => patch((m) => ({ ...m, stages: upsertStage(m.stages ?? [], s as ContractDraftStage) })),
           onToken: (delta) => {
             draft += delta;
-            patch((m) => ({ ...m, content: '```json\n' + draft + '\n```' }));
+            if (!flushTimer) flushTimer = setTimeout(flushDraft, 80);
           },
           onResult: (r) => {
+            cancelFlush();
             const c = r.contract as { name?: string; version?: string } | null;
             const header = c?.name
               ? `**Drafted \`${c.name}\`${c.version ? ` v${c.version}` : ''}** — review and refine below.\n\n`
@@ -252,18 +266,21 @@ export default function CopilotPanel() {
               contractUrl: r.contract_id ? `/data-contracts/${r.contract_id}?ai-draft=true` : undefined,
             }));
           },
-          onExists: (e) => patch((m) => ({ ...m, streaming: false, content: e.message })),
+          onExists: (e) => { cancelFlush(); patch((m) => ({ ...m, streaming: false, content: e.message })); },
           onError: (msg) => {
+            cancelFlush();
             patch((m) => ({ ...m, streaming: false, isError: true, content: `⚠️ ${msg}` }));
             toast({ title: t('common:toast.error'), description: msg, variant: 'destructive' });
           },
         },
       );
     } catch (err) {
+      cancelFlush();
       const errorMessage = err instanceof Error ? err.message : t('search:copilot.messageSendFailed');
       patch((m) => ({ ...m, streaming: false, isError: true, content: `⚠️ ${errorMessage}` }));
       toast({ title: t('common:toast.error'), description: errorMessage, variant: 'destructive' });
     } finally {
+      cancelFlush();
       setIsLoading(false);
       inputRef.current?.focus();
     }

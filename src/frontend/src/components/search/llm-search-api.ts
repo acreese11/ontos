@@ -79,38 +79,45 @@ export async function streamContractDraft(
   const decoder = new TextDecoder();
   let buffer = '';
 
-  // SSE frames are separated by a blank line; each frame has `event:` and `data:` lines.
-  // Keep-alive comment lines (": ping") carry no data and are skipped.
+  const dispatch = (frame: string) => {
+    let eventType = 'message';
+    const dataLines: string[] = [];
+    for (const line of frame.split(/\r?\n/)) {
+      if (line.startsWith('event:')) eventType = line.slice(6).trim();
+      else if (line.startsWith('data:')) dataLines.push(line.slice(5).replace(/^ /, ''));
+    }
+    if (dataLines.length === 0) return; // keep-alive comment (": ping") or blank
+    let payload: any;
+    try {
+      payload = JSON.parse(dataLines.join('\n'));
+    } catch {
+      return;
+    }
+    switch (eventType) {
+      case 'stage': cb.onStage?.(payload); break;
+      case 'token': cb.onToken?.(payload.delta ?? ''); break;
+      case 'result': cb.onResult?.(payload); break;
+      case 'exists': cb.onExists?.(payload); break;
+      case 'error': cb.onError?.(payload.message ?? 'Unknown error'); break;
+    }
+  };
+
+  // SSE frames are separated by a blank line. sse-starlette uses CRLF (\r\n\r\n);
+  // tolerate LF (\n\n) too. Each frame has `event:` and `data:` lines.
+  const FRAME_SEP = /\r?\n\r?\n/;
   for (;;) {
     const { value, done } = await reader.read();
     if (done) break;
     buffer += decoder.decode(value, { stream: true });
-    let sep: number;
-    while ((sep = buffer.indexOf('\n\n')) !== -1) {
-      const frame = buffer.slice(0, sep);
-      buffer = buffer.slice(sep + 2);
-      let eventType = 'message';
-      const dataLines: string[] = [];
-      for (const line of frame.split('\n')) {
-        if (line.startsWith('event:')) eventType = line.slice(6).trim();
-        else if (line.startsWith('data:')) dataLines.push(line.slice(5).replace(/^ /, ''));
-      }
-      if (dataLines.length === 0) continue;
-      let payload: any;
-      try {
-        payload = JSON.parse(dataLines.join('\n'));
-      } catch {
-        continue;
-      }
-      switch (eventType) {
-        case 'stage': cb.onStage?.(payload); break;
-        case 'token': cb.onToken?.(payload.delta ?? ''); break;
-        case 'result': cb.onResult?.(payload); break;
-        case 'exists': cb.onExists?.(payload); break;
-        case 'error': cb.onError?.(payload.message ?? 'Unknown error'); break;
-      }
+    let m: RegExpExecArray | null;
+    while ((m = FRAME_SEP.exec(buffer)) !== null) {
+      const frame = buffer.slice(0, m.index);
+      buffer = buffer.slice(m.index + m[0].length);
+      dispatch(frame);
     }
   }
+  // Flush any trailing frame not terminated by a blank line before close.
+  if (buffer.trim()) dispatch(buffer);
 }
 
 export async function deleteSession(sessionId: string): Promise<void> {
