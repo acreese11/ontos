@@ -54,6 +54,8 @@ licenses.csv
 
 .cursor/plans/
 
-# Claude Code user-local settings (.claude/agents/ and .claude/commands/ stay tracked)
+# Claude Code user-local settings (.claude/agents/, .claude/commands/, .claude/skills/ stay tracked)
 .claude/settings.json
 .claude/settings.local.json
+.claude/scheduled_tasks.lock
+.claude/worktrees/
