@@ -5,16 +5,22 @@ bundle:
 # frontend/node_modules and __pycache__ alone are 45k+ files.
 sync:
   exclude:
-    - "frontend/node_modules/**"
-    - "frontend/.vite/**"
+    # The whole frontend tree is build-time only — the app serves the built
+    # assets from backend/static (deploy.sh copies frontend/static there before
+    # bundling). Shipping frontend/ (src, node_modules, configs ~thousands of
+    # files) just slows the bundle sync + the app's "Downloading source code".
+    - "frontend/**"
     - "**/__pycache__/**"
     - "**/*.pyc"
     - "**/.DS_Store"
     - "**/node_modules/**"
     - "**/coverage/**"
+    - "**/htmlcov/**"
     - "**/.pytest_cache/**"
     - "**/.ruff_cache/**"
-    - "frontend/static/**"
+    # Test + e2e code isn't imported by the running app.
+    - "backend/src/tests/**"
+    - "e2e/**"
     - ".env"
     - ".env.local"
     - "backend/.env"
