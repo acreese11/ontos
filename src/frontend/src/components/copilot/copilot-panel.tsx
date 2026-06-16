@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Send, Loader2, Sparkles, X, MessageSquare, Plus, Trash2 } from 'lucide-react';
+import { Send, Loader2, Sparkles, X, MessageSquare, Plus, Trash2, Check, CircleDot } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
@@ -15,13 +15,62 @@ import { useToast } from '@/hooks/use-toast';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import LLMConsentDialog, { hasLLMConsent } from '@/components/common/llm-consent-dialog';
-import { fetchLLMStatus, fetchSessions, sendMessage, deleteSession } from '@/components/search/llm-search-api';
-import { useCopilotStore, type CopilotPageContext } from '@/stores/copilot-store';
+import { fetchLLMStatus, fetchSessions, sendMessage, deleteSession, streamContractDraft } from '@/components/search/llm-search-api';
+import { useCopilotStore, PANEL_MIN_WIDTH, type CopilotPageContext } from '@/stores/copilot-store';
 import { useCopilotQuestions } from '@/hooks/use-copilot-questions';
 import type { LLMConfig } from '@/types/llm';
-import type { ChatMessage, LLMSearchStatus, SessionSummary } from '@/types/llm-search';
+import type { ChatMessage, ContractDraftStage, LLMSearchStatus, SessionSummary } from '@/types/llm-search';
 
 const WELCOME_DISMISSED_KEY = 'copilot-welcome-dismissed';
+
+// "Draft a data contract for cat.sch.tbl" — the FQN must immediately follow
+// "contract [for]" so we only divert to the streaming generator on a confident
+// match; anything else (e.g. "create a contract spec — does a.b.c comply?")
+// falls through to the normal agent chat. Identifier parts match the backend
+// _IDENT_RE (leading non-digit) so the divert and the server agree.
+const CONTRACT_DRAFT_INTENT =
+  /\b(?:draft|generate|create|author)\s+(?:a\s+|an\s+|the\s+)?(?:new\s+)?(?:draft\s+)?(?:data\s+)?contract\s+(?:for\s+)?[`"']?([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)\b/i;
+
+const STAGE_LABELS: Record<string, string> = {
+  inspect_columns: 'Inspecting columns',
+  sample_rows: 'Sampling rows',
+  column_stats: 'Computing column stats',
+  llm_call: 'Drafting with AI',
+  parse_validate: 'Validating contract',
+};
+
+function upsertStage(stages: ContractDraftStage[], e: ContractDraftStage): ContractDraftStage[] {
+  const idx = stages.findIndex((s) => s.step === e.step);
+  if (idx === -1) return [...stages, e];
+  const next = [...stages];
+  next[idx] = { ...next[idx], ...e };
+  return next;
+}
+
+function ContractStageChecklist({ stages, streaming }: { stages: ContractDraftStage[]; streaming?: boolean }) {
+  if (!stages.length) return null;
+  return (
+    <ul className="mb-2 space-y-1">
+      {stages.map((s) => {
+        const done = s.status === 'done';
+        return (
+          <li key={s.step} className="flex items-center gap-2 text-xs">
+            {done ? (
+              <Check className="w-3 h-3 text-emerald-500 shrink-0" />
+            ) : streaming ? (
+              <Loader2 className="w-3 h-3 animate-spin text-violet-500 shrink-0" />
+            ) : (
+              <CircleDot className="w-3 h-3 text-muted-foreground shrink-0" />
+            )}
+            <span className={done ? 'text-muted-foreground' : 'font-medium'}>
+              {STAGE_LABELS[s.step] ?? s.step}
+            </span>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
 
 function buildContextPrefix(ctx: CopilotPageContext): string {
   let prefix = `[Context: User is on the "${ctx.pageName}" page at ${ctx.pageUrl}`;
@@ -53,6 +102,9 @@ function CopilotMessage({ message }: { message: ChatMessage }) {
           <p className="whitespace-pre-wrap">{message.content}</p>
         ) : (
           <div className="prose prose-sm dark:prose-invert max-w-none [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
+            {message.stages && (
+              <ContractStageChecklist stages={message.stages} streaming={message.streaming} />
+            )}
             <ReactMarkdown
               remarkPlugins={[remarkGfm]}
               components={{
@@ -79,6 +131,14 @@ function CopilotMessage({ message }: { message: ChatMessage }) {
             >
               {message.content || ''}
             </ReactMarkdown>
+            {message.contractUrl && (
+              <a
+                href={message.contractUrl}
+                className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-violet-600 dark:text-violet-400 hover:underline no-underline"
+              >
+                Open draft in contract editor →
+              </a>
+            )}
           </div>
         )}
       </div>
@@ -90,7 +150,8 @@ export default function CopilotPanel() {
   const { t } = useTranslation(['search', 'common']);
   const isOpen = useCopilotStore((s) => s.isOpen);
   const pageContext = useCopilotStore((s) => s.pageContext);
-  const { closePanel } = useCopilotStore((s) => s.actions);
+  const panelWidth = useCopilotStore((s) => s.panelWidth);
+  const { closePanel, setPanelWidth, setResizing } = useCopilotStore((s) => s.actions);
   const questionGroups = useCopilotQuestions();
 
   const [status, setStatus] = useState<LLMSearchStatus | null>(null);
@@ -107,6 +168,28 @@ export default function CopilotPanel() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
+
+  // Drag-resizable panel width lives in the store so the main layout can reserve
+  // matching space (otherwise the fixed panel overlays + cuts off page content).
+  const startResize = (e: React.MouseEvent) => {
+    e.preventDefault();
+    // Cap = smaller of "leave an 80px sliver" and the panel's CSS 95vw cap, so
+    // the layout's reserved margin matches the panel's actual width (no gap).
+    const maxW = Math.max(480, Math.min(window.innerWidth - 80, Math.round(window.innerWidth * 0.95)));
+    setResizing(true);
+    const onMove = (ev: MouseEvent) => {
+      setPanelWidth(Math.min(Math.max(window.innerWidth - ev.clientX, PANEL_MIN_WIDTH), maxW));
+    };
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      document.body.style.userSelect = '';
+      setResizing(false);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    document.body.style.userSelect = 'none';
+  };
 
   const llmConfig: LLMConfig = {
     enabled: status?.enabled ?? false,
@@ -143,12 +226,103 @@ export default function CopilotPanel() {
     localStorage.setItem(WELCOME_DISMISSED_KEY, 'true');
   };
 
+  const handleStreamContract = async (
+    catalog: string,
+    schema: string,
+    table: string,
+    rawText: string,
+  ) => {
+    const userMessage: ChatMessage = {
+      id: `temp-${Date.now()}`,
+      role: 'user',
+      content: rawText,
+      timestamp: new Date().toISOString(),
+    };
+    const asstId = `stream-${Date.now()}`;
+    const asstMessage: ChatMessage = {
+      id: asstId,
+      role: 'assistant',
+      content: '',
+      streaming: true,
+      stages: [],
+      timestamp: new Date().toISOString(),
+    };
+    setMessages((prev) => [...prev, userMessage, asstMessage]);
+    setInput('');
+    setIsLoading(true);
+
+    const patch = (fn: (m: ChatMessage) => ChatMessage) =>
+      setMessages((prev) => prev.map((m) => (m.id === asstId ? fn(m) : m)));
+
+    // Batch token renders: re-running ReactMarkdown over the growing contract on
+    // every delta is O(n²). Coalesce to ~1 render / 80ms; terminal handlers
+    // cancel the pending flush and set final content.
+    let draft = '';
+    let flushTimer: ReturnType<typeof setTimeout> | null = null;
+    const flushDraft = () => {
+      flushTimer = null;
+      patch((m) => ({ ...m, content: '```json\n' + draft + '\n```' }));
+    };
+    const cancelFlush = () => {
+      if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
+    };
+    try {
+      await streamContractDraft(
+        { catalog, schema, table },
+        {
+          onStage: (s) => patch((m) => ({ ...m, stages: upsertStage(m.stages ?? [], s as ContractDraftStage) })),
+          onToken: (delta) => {
+            draft += delta;
+            if (!flushTimer) flushTimer = setTimeout(flushDraft, 80);
+          },
+          onResult: (r) => {
+            cancelFlush();
+            const c = r.contract as { name?: string; version?: string } | null;
+            const header = c?.name
+              ? `**Drafted \`${c.name}\`${c.version ? ` v${c.version}` : ''}** — review and refine below.\n\n`
+              : '**Draft complete.**\n\n';
+            const body = c ? '```json\n' + JSON.stringify(c, null, 2) + '\n```' : '';
+            patch((m) => ({
+              ...m,
+              streaming: false,
+              content: header + body,
+              contractUrl: r.contract_id ? `/data-contracts/${r.contract_id}?ai-draft=true` : undefined,
+            }));
+          },
+          onExists: (e) => { cancelFlush(); patch((m) => ({ ...m, streaming: false, content: e.message })); },
+          onError: (msg) => {
+            cancelFlush();
+            patch((m) => ({ ...m, streaming: false, isError: true, content: `⚠️ ${msg}` }));
+            toast({ title: t('common:toast.error'), description: msg, variant: 'destructive' });
+          },
+        },
+      );
+    } catch (err) {
+      cancelFlush();
+      const errorMessage = err instanceof Error ? err.message : t('search:copilot.messageSendFailed');
+      patch((m) => ({ ...m, streaming: false, isError: true, content: `⚠️ ${errorMessage}` }));
+      toast({ title: t('common:toast.error'), description: errorMessage, variant: 'destructive' });
+    } finally {
+      cancelFlush();
+      setIsLoading(false);
+      inputRef.current?.focus();
+    }
+  };
+
   const handleSend = async () => {
     const messageContent = input.trim();
     if (!messageContent || isLoading) return;
 
     if (!hasLLMConsent(llmConfig)) {
       setShowConsentDialog(true);
+      return;
+    }
+
+    // Confident "draft a contract for cat.sch.tbl" → live streaming generator;
+    // everything else goes to the normal agent chat.
+    const draftMatch = messageContent.match(CONTRACT_DRAFT_INTENT);
+    if (draftMatch) {
+      handleStreamContract(draftMatch[1], draftMatch[2], draftMatch[3], messageContent);
       return;
     }
 
@@ -259,7 +433,18 @@ export default function CopilotPanel() {
       />
 
       {/* Panel container — fixed right side, no overlay */}
-      <div className="fixed inset-y-0 right-0 z-50 w-[400px] border-l bg-background shadow-lg flex flex-col animate-in slide-in-from-right duration-300">
+      <div
+        className="fixed inset-y-0 right-0 z-50 border-l bg-background shadow-lg flex flex-col animate-in slide-in-from-right duration-300"
+        style={{ width: panelWidth, maxWidth: '95vw' }}
+      >
+        {/* Drag handle — resize the panel relative to the main window */}
+        <div
+          onMouseDown={startResize}
+          className="absolute inset-y-0 left-0 w-1.5 -ml-0.5 cursor-col-resize z-10 group"
+          title="Drag to resize"
+        >
+          <div className="h-full w-px mx-auto bg-border group-hover:bg-violet-400 group-hover:w-0.5 transition-colors" />
+        </div>
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b shrink-0">
           <div className="flex items-center gap-2">
@@ -387,7 +572,7 @@ export default function CopilotPanel() {
                 {messages.map((message) => (
                   <CopilotMessage key={message.id} message={message} />
                 ))}
-                {isLoading && (
+                {isLoading && !messages.some((m) => m.streaming) && (
                   <div className="flex gap-2">
                     <div className="w-6 h-6 rounded-full bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center shrink-0">
                       <Sparkles className="w-3 h-3 text-white" />

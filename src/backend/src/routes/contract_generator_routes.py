@@ -3,6 +3,7 @@
 POST /api/contract-generator/preview  → inspect + LLM call, return draft contract (no DB write)
 POST /api/contract-generator/generate → preview + persist as a draft DataContract
 """
+import json
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
@@ -104,6 +105,73 @@ async def generate_and_save(
         logger.exception("Contract generation failed")
         raise HTTPException(status_code=500, detail=f"Internal error: {e}")
     return result
+
+
+@router.post("/stream")
+async def stream_contract(
+    body: GenerateRequest,
+    request: Request,
+    db: DBSessionDep,
+    gen: ContractGeneratorManager = Depends(get_contract_generator_manager),
+    x_forwarded_access_token: Optional[str] = Header(default=None),
+    _: bool = Depends(PermissionChecker('data-contracts', FeatureAccessLevel.READ_WRITE)),
+):
+    """Stream contract-drafting progress as Server-Sent Events.
+
+    Yields the generator's stage checklist + the LLM tokens live, then a terminal
+    ``result`` (or ``exists`` / ``error``) event. Consumed by the Ask Ontos copilot
+    panel. The SSE ``event:`` field carries the event type (stage|token|result|
+    exists|error) and ``data:`` is the JSON payload.
+    """
+    import anyio
+    from sse_starlette.sse import EventSourceResponse
+
+    user_token = _user_token(x_forwarded_access_token)
+    current_user = None
+    user = getattr(request.state, "user", None)
+    if user:
+        current_user = getattr(user, "username", None) or getattr(user, "email", None)
+
+    async def event_publisher():
+        # Bounded buffer gives natural backpressure: the worker thread blocks on
+        # send() when the client is slow; closing the receive end on disconnect
+        # makes the blocked send raise (no deadlock).
+        send_stream, receive_stream = anyio.create_memory_object_stream(max_buffer_size=200)
+
+        def _run_blocking():
+            try:
+                for ev in gen.generate_stream(
+                    catalog=body.catalog,
+                    schema=body.schema_,
+                    table=body.table,
+                    sample_size=body.sample_size,
+                    user_token=user_token,
+                    db=db,
+                    current_user=current_user,
+                    force=body.force,
+                ):
+                    anyio.from_thread.run(send_stream.send, ev)
+            except Exception as e:  # never let the worker die silently
+                logger.exception("Contract stream generation failed")
+                try:
+                    anyio.from_thread.run(send_stream.send, {"type": "error", "message": str(e)})
+                except Exception:
+                    pass
+            finally:
+                anyio.from_thread.run(send_stream.aclose)
+
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(anyio.to_thread.run_sync, _run_blocking)
+            async with receive_stream:
+                async for ev in receive_stream:
+                    if await request.is_disconnected():
+                        break
+                    yield {"event": ev.get("type", "message"), "data": json.dumps(ev)}
+
+    return EventSourceResponse(
+        event_publisher(),
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 def register_routes(app):

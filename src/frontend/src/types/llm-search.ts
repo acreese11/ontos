@@ -40,6 +40,14 @@ export interface ToolResult {
 // Message Types
 // ============================================================================
 
+// One step of the streamed contract-draft pipeline (Ask Ontos "draft a contract" intent).
+export interface ContractDraftStage {
+  step: string;
+  status: 'start' | 'done';
+  // optional per-stage metrics (columns_found, rows_returned, stats_computed, response_chars)
+  [key: string]: unknown;
+}
+
 export interface ChatMessage {
   id: string;
   role: MessageRole;
@@ -47,6 +55,12 @@ export interface ChatMessage {
   tool_calls?: ToolCall[];
   tool_call_id?: string;
   timestamp: string;
+  // Live contract-draft streaming state (only on the assistant message that
+  // renders a streamed "draft a contract for cat.sch.tbl" request).
+  streaming?: boolean;
+  stages?: ContractDraftStage[];
+  contractUrl?: string;
+  isError?: boolean;
 }
 
 export interface ChatMessageCreate {

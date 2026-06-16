@@ -22,7 +22,7 @@ from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.sql import StatementState
 
 from src.common.config import Settings
-from src.common.llm_client import create_openai_client, chat_completion
+from src.common.llm_client import create_openai_client, chat_completion, stream_chat_completion
 from src.common.logging import get_logger
 
 logger = get_logger(__name__)
@@ -115,6 +115,60 @@ sample data, not generic placeholders. If you see all values matching a regex, c
 If a column has 0 nulls in samples, mark it required. If a column has low cardinality, emit an enum.
 
 OUTPUT: a single JSON object, nothing else."""
+
+
+def _finalize_contract(
+    contract: Dict[str, Any],
+    *,
+    catalog: str,
+    schema: str,
+    table: str,
+    warnings: List[str],
+) -> Dict[str, Any]:
+    """Apply conservative defaults + defensive normalization to a parsed contract.
+
+    Shared by ``generate()`` and ``generate_stream()`` so the two paths can't drift.
+    Mutates and returns ``contract``; appends any data-shape issues to ``warnings``.
+    """
+    # Ensure required top-level fields are present; fill conservative defaults
+    contract.setdefault("kind", "DataContract")
+    contract.setdefault("apiVersion", "v3.1.0")
+    contract.setdefault("version", "1.0.0")
+    contract.setdefault("status", "draft")
+    if not contract.get("name"):
+        contract["name"] = f"{table}".lower().replace(" ", "_")
+    # Defensive normalization: the LLM occasionally emits list fields as
+    # strings instead of dicts. Filter to dicts only and log warnings so
+    # downstream persistence (which expects dict shapes) doesn't blow up.
+    for field in ("schema", "qualityRules", "roles", "team", "support", "slaProperties", "customProperties"):
+        raw = contract.get(field) or []
+        if not isinstance(raw, list):
+            contract[field] = []
+            continue
+        kept: List[Dict[str, Any]] = []
+        dropped = 0
+        for item in raw:
+            if isinstance(item, dict):
+                kept.append(item)
+            else:
+                dropped += 1
+        if dropped:
+            warnings.append(f"LLM emitted {dropped} non-dict entries in {field}; dropped")
+        contract[field] = kept
+    # Same drill one level deeper for schema[*].properties.
+    for sch in contract.get("schema", []):
+        props = sch.get("properties") or []
+        if isinstance(props, list):
+            sch["properties"] = [p for p in props if isinstance(p, dict)]
+
+    # Force AI-draft markers on customProperties.
+    cps = contract.get("customProperties") or []
+    if not any(cp.get("property") == "generatedBy" for cp in cps):
+        cps.append({"property": "generatedBy", "value": "ai", "description": "Contract drafted by AI from UC table inspection"})
+    if not any(cp.get("property") == "sourceTable" for cp in cps):
+        cps.append({"property": "sourceTable", "value": f"{catalog}.{schema}.{table}", "description": "Source table used for generation"})
+    contract["customProperties"] = cps
+    return contract
 
 
 @dataclass
@@ -454,44 +508,7 @@ class ContractGeneratorManager:
         except Exception as e:
             raise RuntimeError(f"Failed to parse LLM output as JSON: {e}\nFirst 500 chars:\n{content[:500]}")
 
-        # Ensure required top-level fields are present; fill conservative defaults
-        contract.setdefault("kind", "DataContract")
-        contract.setdefault("apiVersion", "v3.1.0")
-        contract.setdefault("version", "1.0.0")
-        contract.setdefault("status", "draft")
-        if not contract.get("name"):
-            contract["name"] = f"{table}".lower().replace(" ", "_")
-        # Defensive normalization: the LLM occasionally emits list fields as
-        # strings instead of dicts. Filter to dicts only and log warnings so
-        # downstream persistence (which expects dict shapes) doesn't blow up.
-        for field in ("schema", "qualityRules", "roles", "team", "support", "slaProperties", "customProperties"):
-            raw = contract.get(field) or []
-            if not isinstance(raw, list):
-                contract[field] = []
-                continue
-            kept: List[Dict[str, Any]] = []
-            dropped = 0
-            for item in raw:
-                if isinstance(item, dict):
-                    kept.append(item)
-                else:
-                    dropped += 1
-            if dropped:
-                warnings.append(f"LLM emitted {dropped} non-dict entries in {field}; dropped")
-            contract[field] = kept
-        # Same drill one level deeper for schema[*].properties.
-        for sch in contract.get("schema", []):
-            props = sch.get("properties") or []
-            if isinstance(props, list):
-                sch["properties"] = [p for p in props if isinstance(p, dict)]
-
-        # Force AI-draft markers on customProperties.
-        cps = contract.get("customProperties") or []
-        if not any(cp.get("property") == "generatedBy" for cp in cps):
-            cps.append({"property": "generatedBy", "value": "ai", "description": "Contract drafted by AI from UC table inspection"})
-        if not any(cp.get("property") == "sourceTable" for cp in cps):
-            cps.append({"property": "sourceTable", "value": f"{catalog}.{schema}.{table}", "description": "Source table used for generation"})
-        contract["customProperties"] = cps
+        _finalize_contract(contract, catalog=catalog, schema=schema, table=table, warnings=warnings)
 
         duration = time.time() - t0
         steps[-1]["duration_s"] = duration
@@ -591,4 +608,169 @@ class ContractGeneratorManager:
             "duration_seconds": result.duration_seconds,
             "steps": result.steps,
             "warnings": result.warnings,
+        }
+
+    def generate_stream(
+        self,
+        *,
+        catalog: str,
+        schema: str,
+        table: str,
+        sample_size: int = 20,
+        user_token: Optional[str] = None,
+        db=None,
+        current_user: Optional[str] = None,
+        persist: bool = True,
+        force: bool = False,
+    ):
+        """Generator yielding progress events while drafting a contract.
+
+        Mirrors ``generate()`` / ``generate_and_save()`` but yields events as work
+        happens, for live streaming into the Ask Ontos panel. Event shapes:
+
+          {"type": "stage",  "step": <name>, "status": "start"|"done", **metrics}
+          {"type": "token",  "delta": <str>}                  # during llm_call
+          {"type": "result", "contract_id": <str|None>, "contract": {...},
+                              "llm_model": <str>, "duration_seconds": <float>,
+                              "warnings": [...]}                # terminal, success
+          {"type": "exists", "existing": [...], "message": <str>}  # terminal
+          {"type": "error",  "message": <str>}                     # terminal
+
+        This is a SYNC generator doing blocking SDK/warehouse/LLM I/O; the SSE
+        route runs it in a worker thread and bridges events to the client.
+        """
+        # Validate identifiers BEFORE any SQL interpolation or SDK call — same
+        # guard as generate()/generate_and_save().
+        catalog = _validate_ident(catalog, kind="catalog")
+        schema = _validate_ident(schema, kind="schema")
+        table = _validate_ident(table, kind="table")
+
+        # Existence short-circuit before the expensive LLM call (matches
+        # generate_and_save) — only when persisting against a real session.
+        if persist and db is not None and self.contracts_manager and not force:
+            existing = self.find_existing_for_table(db, catalog, schema, table)
+            if existing:
+                yield {
+                    "type": "exists",
+                    "existing": existing,
+                    "message": (
+                        f"A contract for {catalog}.{schema}.{table} already exists "
+                        f"(id={existing[0]['contract_id']}, name={existing[0]['name']!r}, "
+                        f"status={existing[0]['status']!r}). Regenerate with force=true."
+                    ),
+                }
+                return
+
+        t0 = time.time()
+        warnings: List[str] = []
+        ws = self._ws()
+        wid = self._warehouse_id()
+
+        # 1. Inspect columns
+        yield {"type": "stage", "step": "inspect_columns", "status": "start"}
+        columns = _inspect_columns(ws, catalog, schema, table)
+        if not columns:
+            yield {"type": "error", "message": f"Table {catalog}.{schema}.{table} has no columns or doesn't exist"}
+            return
+        try:
+            table_info = ws.tables.get(full_name=f"{catalog}.{schema}.{table}")
+            table_comment = table_info.comment or ""
+        except Exception:
+            table_comment = ""
+        yield {"type": "stage", "step": "inspect_columns", "status": "done", "columns_found": len(columns)}
+
+        # 2. Sample rows
+        yield {"type": "stage", "step": "sample_rows", "status": "start"}
+        try:
+            sample = _sample_rows(ws, wid, catalog, schema, table, n=sample_size)
+        except Exception as e:
+            warnings.append(f"Sample failed: {e}")
+            sample = []
+        yield {"type": "stage", "step": "sample_rows", "status": "done", "rows_returned": len(sample)}
+
+        # 3. Per-column stats
+        yield {"type": "stage", "step": "column_stats", "status": "start"}
+        try:
+            stats = _column_stats(ws, wid, catalog, schema, table, columns)
+        except Exception as e:
+            warnings.append(f"Column stats failed: {e}")
+            stats = {c["name"]: {} for c in columns}
+        yield {"type": "stage", "step": "column_stats", "status": "done",
+               "stats_computed": sum(1 for v in stats.values() if v)}
+
+        # 4. Build prompt + stream the LLM call
+        yield {"type": "stage", "step": "llm_call", "status": "start"}
+        user_prompt = _build_user_prompt(catalog, schema, table, columns, sample, stats, table_comment)
+        effective_token = user_token
+        if not effective_token:
+            try:
+                headers = ws.config.authenticate() or {}
+                auth = headers.get("Authorization", "")
+                if auth.startswith("Bearer "):
+                    effective_token = auth[7:]
+            except Exception as e:
+                warnings.append(f"Could not derive LLM token from workspace config: {e}")
+        client = create_openai_client(self.settings, user_token=effective_token)
+        endpoint = self.settings.LLM_ENDPOINT
+        if not endpoint:
+            yield {"type": "error", "message": "LLM_ENDPOINT is not configured"}
+            return
+        pieces: List[str] = []
+        try:
+            for delta in stream_chat_completion(
+                client,
+                model=endpoint,
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": user_prompt},
+                ],
+                max_tokens=8192,
+                temperature=0.2,
+            ):
+                pieces.append(delta)
+                yield {"type": "token", "delta": delta}
+        except Exception as e:
+            logger.warning(f"Streaming LLM call failed: {e}")
+            yield {"type": "error", "message": f"LLM call failed: {e}"}
+            return
+        content = "".join(pieces).strip()
+        yield {"type": "stage", "step": "llm_call", "status": "done", "response_chars": len(content)}
+        if not content:
+            yield {"type": "error", "message": "LLM returned empty response"}
+            return
+
+        # 5. Parse + normalize
+        yield {"type": "stage", "step": "parse_validate", "status": "start"}
+        try:
+            contract = _extract_json(content)
+        except Exception as e:
+            yield {"type": "error",
+                   "message": f"Failed to parse LLM output as JSON: {e}"}
+            return
+        _finalize_contract(contract, catalog=catalog, schema=schema, table=table, warnings=warnings)
+        yield {"type": "stage", "step": "parse_validate", "status": "done"}
+
+        # Persist (best-effort — surface the contract even if save fails).
+        duration = time.time() - t0
+        contract_id: Optional[str] = None
+        if persist and db is not None and self.contracts_manager:
+            try:
+                created = self.contracts_manager.create_contract_with_relations(
+                    db=db,
+                    contract_data=contract,
+                    current_user=current_user,
+                    background_tasks=None,
+                )
+                contract_id = str(created.id)
+            except Exception as e:
+                logger.exception("Persist of streamed contract failed")
+                warnings.append(f"Contract drafted but save failed: {e}")
+
+        yield {
+            "type": "result",
+            "contract_id": contract_id,
+            "contract": contract,
+            "llm_model": endpoint,
+            "duration_seconds": duration,
+            "warnings": warnings,
         }
