@@ -173,7 +173,9 @@ export default function CopilotPanel() {
   // matching space (otherwise the fixed panel overlays + cuts off page content).
   const startResize = (e: React.MouseEvent) => {
     e.preventDefault();
-    const maxW = Math.max(480, window.innerWidth - 80); // leave a sliver of the app visible
+    // Cap = smaller of "leave an 80px sliver" and the panel's CSS 95vw cap, so
+    // the layout's reserved margin matches the panel's actual width (no gap).
+    const maxW = Math.max(480, Math.min(window.innerWidth - 80, Math.round(window.innerWidth * 0.95)));
     setResizing(true);
     const onMove = (ev: MouseEvent) => {
       setPanelWidth(Math.min(Math.max(window.innerWidth - ev.clientX, PANEL_MIN_WIDTH), maxW));
