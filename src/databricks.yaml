@@ -5,11 +5,16 @@ bundle:
 # frontend/node_modules and __pycache__ alone are 45k+ files.
 sync:
   exclude:
-    # The whole frontend tree is build-time only — the app serves the built
-    # assets from backend/static (deploy.sh copies frontend/static there before
-    # bundling). Shipping frontend/ (src, node_modules, configs ~thousands of
-    # files) just slows the bundle sync + the app's "Downloading source code".
-    - "frontend/**"
+    # NOTE: frontend SOURCE must ship — the Databricks App runs a REMOTE build
+    # (src/package.json → npm run build → scripts/build_static.sh), which does
+    # `yarn --cwd frontend install + build` and rsyncs the output to
+    # backend/static. The UI is built on the compute, so frontend/src + configs
+    # are required. Only exclude the regenerated/cache dirs below, NOT the
+    # source. (Excluding frontend/** wholesale breaks the deploy with
+    # "build_static.sh: cd .../frontend: No such file or directory".)
+    - "frontend/node_modules/**"
+    - "frontend/.vite/**"
+    - "frontend/static/**"
     - "**/__pycache__/**"
     - "**/*.pyc"
     - "**/.DS_Store"
