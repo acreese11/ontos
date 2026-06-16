@@ -13,17 +13,33 @@ Authentication priority:
   4. Application Default Credentials (ADC)
 """
 
+from __future__ import annotations
+
 import json
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
-from google.api_core.exceptions import (
-    Forbidden,
-    GoogleAPICallError,
-    NotFound,
-)
-from google.cloud import bigquery
-from google.oauth2 import service_account
+# google-cloud-bigquery is an OPTIONAL dependency. BigQuery is one of several
+# federation sources, and a Databricks-only deployment doesn't need it — so we
+# import lazily, letting this module (and its startup registration) load even
+# when the package isn't installed. Actually using the connector without it
+# raises a clear error (see _init_client). `from __future__ import annotations`
+# keeps the bigquery.* type hints below from evaluating at import time.
+try:
+    from google.api_core.exceptions import Forbidden, GoogleAPICallError, NotFound
+    from google.cloud import bigquery
+    from google.oauth2 import service_account
+    _GOOGLE_AVAILABLE = True
+except ImportError:
+    bigquery = None  # type: ignore[assignment]
+    service_account = None  # type: ignore[assignment]
+    # Placeholders so the `except <Name>:` clauses stay valid when the package is
+    # absent — those code paths never run without a live client anyway.
+    Forbidden = GoogleAPICallError = NotFound = Exception  # type: ignore[misc,assignment]
+    _GOOGLE_AVAILABLE = False
+
+if TYPE_CHECKING:
+    from google.cloud import bigquery
 
 from src.connectors.base import (
     AssetConnector,
@@ -139,6 +155,13 @@ class BigQueryConnector(AssetConnector):
         3. Local key file — dev/testing fallback
         4. Application Default Credentials
         """
+        if not _GOOGLE_AVAILABLE:
+            raise ConnectorConnectionError(
+                "BigQuery connector requires the optional 'google-cloud-bigquery' "
+                "package, which is not installed in this deployment. Install it "
+                "(pip install google-cloud-bigquery) to use BigQuery as a source."
+            )
+
         if self._bq_client is not None:
             return self._bq_client
 

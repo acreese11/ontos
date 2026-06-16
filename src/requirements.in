@@ -6,6 +6,10 @@ filelock>=3.29.0
 bcrypt>=4.0.0
 sse-starlette>=1.6.0,<4.0.0
 reportlab>=4.0.0
-google-cloud-bigquery>=3.25.0
 openpyxl>=3.1.0
 fpdf2>=2.8.0
+
+# OPTIONAL — the BigQuery federation connector imports google-cloud-bigquery
+# lazily (see src/backend/src/connectors/bigquery.py). Not installed by default
+# so the deploy stays lean; install it to use BigQuery as a source:
+#   google-cloud-bigquery>=3.25.0
