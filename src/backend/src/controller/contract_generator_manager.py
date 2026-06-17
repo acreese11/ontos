@@ -23,6 +23,7 @@ from databricks.sdk.service.sql import StatementState
 
 from src.common.config import Settings
 from src.common.llm_client import create_openai_client, chat_completion, stream_chat_completion
+from src.common.dqx_catalog import CHECK_CATALOG, build_implementation, to_criticality, to_display
 from src.common.logging import get_logger
 
 logger = get_logger(__name__)
@@ -79,6 +80,16 @@ def _sanitize_comment(text: Optional[str]) -> str:
 # ──────────────────────────────────────────────────────────────
 # System prompt — constrains the LLM to emit valid ODCS v3.1.
 # ──────────────────────────────────────────────────────────────
+def _dqx_vocab_lines() -> str:
+    """Compact DQX check vocabulary for the generator prompt — kept in sync with CHECK_CATALOG."""
+    lines = []
+    for c in CHECK_CATALOG:
+        args = ", ".join(f"{a.name}{'' if a.required else '?'}" for a in c.args)
+        tag = " [common]" if c.in_v1_subset else ""
+        lines.append(f"    - {c.function}({args}) — {c.label}; {c.grain}-level{tag}")
+    return "\n".join(lines)
+
+
 SYSTEM_PROMPT = """You are an expert data steward generating Open Data Contract Standard (ODCS) v3.1 contracts from a Unity Catalog table's metadata and sample data.
 
 Your output MUST be a single JSON object that follows ODCS v3.1. Do not output prose, markdown, or commentary — only the JSON object. No code fences.
@@ -98,11 +109,17 @@ The contract must include ALL of the following sections, populated meaningfully:
     the column name + sample values), required (true for FK-like or non-null-in-samples columns),
     classification ("Public"/"Internal"/"Restricted"), and where applicable: unique, examples (up to 3),
     pattern (regex for codes/IDs), min/max for numerics, enum for low-cardinality categoricals
-  - qualityRules: 3–8 SPECIFIC, MEANINGFUL rules grounded in the sample data — uniqueness, completeness,
-    range checks, regex/format, referential, freshness. Each rule has: name, description, rule (English
-    or SQL-like), dimension (validity/completeness/uniqueness/freshness/consistency/accuracy),
-    severity ("error" or "warning"), businessImpact ("low"/"medium"/"high"/"critical"). PREFER rules
-    that match patterns visible in the samples.
+  - qualityRules: 3–8 SPECIFIC rules grounded in the samples, expressed as EXECUTABLE DQX checks.
+    FIRST prefer column constraints (pattern/min/max/required/unique/enum, set on the property above) for
+    simple single-column facts — DQX generates those checks automatically, so do NOT also emit them here.
+    For checks BEYOND a constraint (allowed-list, freshness, aggregate/volume, referential, cross-column),
+    emit a rule with: name, description, dimension (validity/completeness/uniqueness/freshness/consistency/
+    accuracy), severity ("error"/"warning"), businessImpact ("low"/"medium"/"high"/"critical"), and a
+    `check` object: {"function": <a DQX function below>, "arguments": { … grounded in the data … }}.
+    Use {"function": "sql_expression", "arguments": {"expression": "<boolean Spark SQL>"}} for anything the
+    named functions don't cover. Choose arguments that match the column names + sample values you see.
+    DQX check functions (arg? = optional; [common] = prefer these):
+__DQX_VOCAB__
   - roles: data-steward, domain-owner, consumer (each with role, description, access)
   - team: 2 members (owner + steward) with name/username/role
   - support: slack, email, docs channels
@@ -115,6 +132,38 @@ sample data, not generic placeholders. If you see all values matching a regex, c
 If a column has 0 nulls in samples, mark it required. If a column has low cardinality, emit an enum.
 
 OUTPUT: a single JSON object, nothing else."""
+
+# Inject the live DQX check vocabulary so the prompt stays in sync with the catalog.
+SYSTEM_PROMPT = SYSTEM_PROMPT.replace("__DQX_VOCAB__", _dqx_vocab_lines())
+
+
+def _compile_quality_rules(contract: Dict[str, Any], warnings: List[str]) -> None:
+    """Compile each generated quality rule's ``check`` (function + arguments) into the
+    executable DQX implementation envelope (type=custom, engine=dqx, implementation),
+    so AI-generated rules actually run instead of being inert text. Rules without a
+    recognized ``check`` are left as-is (freeform) and flagged."""
+    valid_fns = {c.function for c in CHECK_CATALOG}
+    for rule in contract.get("qualityRules", []):
+        if not isinstance(rule, dict):
+            continue
+        check = rule.get("check")
+        if not isinstance(check, dict) or not check.get("function"):
+            if not rule.get("implementation") and not rule.get("rule"):
+                warnings.append(f"quality rule {rule.get('name', '?')!r} has no executable check")
+            continue
+        fn = check.get("function")
+        args = check.get("arguments") if isinstance(check.get("arguments"), dict) else {}
+        if fn not in valid_fns:
+            warnings.append(f"quality rule {rule.get('name', '?')!r}: unknown DQX function {fn!r}; left uncompiled")
+            continue
+        name = rule.get("name") or fn
+        rule["type"] = "custom"
+        rule["engine"] = "dqx"
+        rule["implementation"] = json.dumps(
+            build_implementation(fn, args, name=name, criticality=to_criticality(rule.get("severity")))
+        )
+        rule.setdefault("rule", to_display({"function": fn, "arguments": args}))
+        rule.pop("check", None)  # the executable form now lives in `implementation`
 
 
 def _finalize_contract(
@@ -168,6 +217,9 @@ def _finalize_contract(
     if not any(cp.get("property") == "sourceTable" for cp in cps):
         cps.append({"property": "sourceTable", "value": f"{catalog}.{schema}.{table}", "description": "Source table used for generation"})
     contract["customProperties"] = cps
+
+    # Compile any structured `check` rules into executable DQX implementations.
+    _compile_quality_rules(contract, warnings)
     return contract
 
 
