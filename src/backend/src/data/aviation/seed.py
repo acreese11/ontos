@@ -566,6 +566,103 @@ def load_aviation_demo(
         logger.warning("Failed to seed Contract Coverage policy: %s", e, exc_info=True)
         report.setdefault("compliance_policies", {}).setdefault("failed", []).append(str(e))
 
+    # ─── Compliance policy: measured contracts must hold the quality SLA ──
+    # Threshold check that rides on the trust loop: of the active contracts that
+    # ARE being measured (has_recent_quality_metric — the presence check above),
+    # every one must hold a quality score at or above the 95% SLA. Ties the
+    # governance score directly to the latest QualityItem the trust loop records.
+    try:
+        from src.controller.compliance_manager import ComplianceManager
+        from src.models.compliance import CompliancePolicy
+        from src.db_models.compliance import CompliancePolicyDb
+        from uuid import uuid4
+        compliance_mgr = ComplianceManager()
+        sla_name = "Quality SLA — Active Contracts"
+        existing_sla = (
+            db.query(CompliancePolicyDb)
+            .filter(CompliancePolicyDb.name == sla_name)
+            .first()
+        )
+        if existing_sla is None:
+            sla_policy = CompliancePolicy(
+                id=uuid4(),
+                name=sla_name,
+                description=(
+                    "Every active data contract that is being measured must hold a latest "
+                    "quality score of at least 95%. The score is the most recent QualityItem "
+                    "recorded against the contract by any enforcement pipeline (dqx, dbt, GE, "
+                    "soda, …) — the same measurement that drives the trust-loop notification."
+                ),
+                failure_message="Latest quality score is below the 95% SLA for this contract.",
+                rule=(
+                    "MATCH (c:data_contract) "
+                    "WHERE c.status = 'active' AND c.has_recent_quality_metric "
+                    "ASSERT c.latest_quality_score >= 95 "
+                    "ON_FAIL FAIL 'Contract {name} quality score {latest_quality_score}% is below the 95% SLA'"
+                ),
+                compliance=0.0,
+                category="quality",
+                severity="high",
+                is_active=True,
+            )
+            compliance_mgr.create_policy(db, policy=sla_policy, current_user=current_user)
+            report.setdefault("compliance_policies", {}).setdefault("created", []).append(sla_name)
+            logger.info("Seeded compliance policy: %s", sla_name)
+        else:
+            report.setdefault("compliance_policies", {}).setdefault("existing", []).append(sla_name)
+    except Exception as e:
+        logger.warning("Failed to seed Quality SLA policy: %s", e, exc_info=True)
+        report.setdefault("compliance_policies", {}).setdefault("failed", []).append(str(e))
+
+    # ─── Compliance policy: every active contract has an accountable owner ──
+    # Accountability check that connects to the trust loop: the owning team is
+    # exactly who gets notified when a contract's quality breaks, so an active
+    # contract with no owning team is an un-pageable governance gap.
+    try:
+        from src.controller.compliance_manager import ComplianceManager
+        from src.models.compliance import CompliancePolicy
+        from src.db_models.compliance import CompliancePolicyDb
+        from uuid import uuid4
+        compliance_mgr = ComplianceManager()
+        owner_name = "Contract Ownership Assigned"
+        existing_owner = (
+            db.query(CompliancePolicyDb)
+            .filter(CompliancePolicyDb.name == owner_name)
+            .first()
+        )
+        if existing_owner is None:
+            owner_policy = CompliancePolicy(
+                id=uuid4(),
+                name=owner_name,
+                description=(
+                    "Every active data contract must have an owning team assigned. The owning "
+                    "team is the accountable party and the recipient of trust-loop notifications "
+                    "when the contract's quality or schema breaks — an unowned active contract is "
+                    "a governance gap nobody is paged for."
+                ),
+                failure_message="This active contract has no owning team assigned.",
+                rule=(
+                    # owner_team_id is bool-coerced by the runner: a non-empty id passes,
+                    # null/empty fails (mirrors the has_recent_quality_metric pattern).
+                    "MATCH (c:data_contract) "
+                    "WHERE c.status = 'active' "
+                    "ASSERT c.owner_team_id "
+                    "ON_FAIL FAIL 'Contract {name} has no owning team assigned'"
+                ),
+                compliance=0.0,
+                category="governance",
+                severity="high",
+                is_active=True,
+            )
+            compliance_mgr.create_policy(db, policy=owner_policy, current_user=current_user)
+            report.setdefault("compliance_policies", {}).setdefault("created", []).append(owner_name)
+            logger.info("Seeded compliance policy: %s", owner_name)
+        else:
+            report.setdefault("compliance_policies", {}).setdefault("existing", []).append(owner_name)
+    except Exception as e:
+        logger.warning("Failed to seed Contract Ownership policy: %s", e, exc_info=True)
+        report.setdefault("compliance_policies", {}).setdefault("failed", []).append(str(e))
+
     # Final commit
     db.commit()
 
