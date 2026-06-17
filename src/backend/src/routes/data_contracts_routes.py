@@ -4861,8 +4861,10 @@ async def test_quality_check(
             f"SELECT count(*) AS total, count_if(({predicate}) IS NOT TRUE) AS failed "
             f"FROM (SELECT * FROM {physical} LIMIT {sample_n}) _s"
         )
-        # Generous timeout: a serverless SQL warehouse may cold-start (~30-60s).
-        rows = _run_sql(ws, warehouse_id, sql, timeout_s=120)
+        # Keep the request SNAPPY (interactive preview): a short timeout, and on a cold
+        # serverless warehouse (the first query kicks it off but won't finish in time) we
+        # return a clear "starting up, try again" instead of blocking the UI for minutes.
+        rows = _run_sql(ws, warehouse_id, sql, timeout_s=20)
         total = int(rows[0][0])
         failed = int(rows[0][1])
         return TestCheckResult(
@@ -4871,7 +4873,13 @@ async def test_quality_check(
         )
     except Exception as e:
         logger.warning("test-check failed for contract %s (%s): %s", contract_id, body.function, e)
-        return TestCheckResult(previewable=True, physical_name=physical, predicate=predicate, error=str(e))
+        msg = str(e)
+        cold_start = ("PENDING" in msg) or ("RUNNING" in msg)
+        friendly = (
+            "The SQL warehouse is still starting up — wait a few seconds and click Test again."
+            if cold_start else f"Couldn't run the preview: {e}"
+        )
+        return TestCheckResult(previewable=True, physical_name=physical, predicate=predicate, error=friendly)
 
 
 def register_routes(app):
