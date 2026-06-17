@@ -1,6 +1,6 @@
 # Safe Skies — Domain · Product · Contract Model
 
-**Companion to `dais-2026-safe-skies.md`.** This is the business model the synthetic data has to defensibly back. Designed contract-first so the demos land cleanly.
+**Companion to `safe-skies.md`.** This is the business model the synthetic data has to defensibly back. Designed contract-first so the demos land cleanly.
 
 **Source-of-truth precedence:** This model takes priority over the slide spec's specific example table names (e.g., the slide spec's `table_adsb_v2` and `table_oag_clean` were placeholder examples). The talk reflects what real enterprise aviation data architectures look like — modeled against OAG and Cirium's published product taxonomies — and the slide spec will be updated to match this model where they diverge.
 

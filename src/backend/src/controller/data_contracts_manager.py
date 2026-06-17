@@ -1758,7 +1758,7 @@ class DataContractsManager(DeliveryMixin, SearchableAsset):
         schema_semantic_work = []
         prop_semantic_work = []
         # Per-schema quality rules (DQX-compatible) attach to the schema, not the contract.
-        # See fix #1 in plans/dais-critical-review.md.
+        # See fix #1 in plans/dais/critical-review.md.
         schema_quality_work: list[tuple[str, list]] = []
         # Per-property (column-level) quality rules — persist with BOTH object_id and
         # property_id so column-level DQX checks (e.g. authored in the schema editor's

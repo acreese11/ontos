@@ -2,7 +2,7 @@
 
 Covers the two pure functions that gate attacker-influenced input before it
 reaches SQL interpolation (_validate_ident) or the LLM prompt
-(_sanitize_comment). See plans/dais-critical-review.md findings #6 and #8.
+(_sanitize_comment). See plans/dais/critical-review.md findings #6 and #8.
 """
 import pytest
 

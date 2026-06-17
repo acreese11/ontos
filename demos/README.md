@@ -57,7 +57,7 @@ for Maintain.
 | [3 · Discover](demo-3-discover-marketplace-subscribe.md) | Marketplace + subscribe | ⚠️ seed subscriptions first |
 | [4 · Maintain](demo-4-maintain.md) | Contract Coverage (+ notify loop, drift) | ✅ Coverage built + validated; notify loop ❌ not built; drift ❌ not built (cut candidate) |
 
-(Genie demo cut.) See `../plans/dais-demo-readiness.md` for the full rehearsal findings.
+(Genie demo cut.) See `../plans/dais/demo-readiness.md` for the full rehearsal findings.
 
 ## Timing reconciliation (vs the deck)
 

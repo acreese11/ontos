@@ -100,7 +100,7 @@ Implementation:
 Outputs into Lakebase `app_ontos_dais` (local) / `app_ontos` (deployed):
 - 8 domains (Flight Ops, Scheduling, Maintenance, Crew, Regulatory, Fuel, Passenger, Reference Data)
 - 13 teams (one per domain plus Operations Analytics, Sustainability Office, Customer Comms Analytics, Operations Ingest)
-- 12 ODCS v3.1 contracts with real schema + quality rules (per `plans/dais-aviation-data-research.md`)
+- 12 ODCS v3.1 contracts with real schema + quality rules (per `plans/dais/aviation-data-research.md`)
 - 16 real ODPS data products (11 source-aligned, 3 aggregate-aligned, 2 consumer-aligned)
 - ~30 stub products spread across all 8 domains for marketplace density
 - Entity-relationship compositions: Global Flight Ops `composesOf` 5 source-aligned inputs; On-Time Performance `derivesFrom` Global Flight Ops
