@@ -3179,19 +3179,28 @@ class DataProductsManager(DeliveryMixin, SearchableAsset):
         Without this, the Subscribe button writes only ``data_product_subscriptions``, which
         the trust loop never reads. Idempotent; never raises (a bridge failure must not
         break the subscribe)."""
+        # Use the repo directly (NOT EntitySubscriptionsManager.subscribe) so its internal
+        # db.rollback() on a unique-constraint race can't wipe the OUTER transaction (the
+        # product subscription) on this shared session. A find_existing pre-check handles the
+        # normal idempotent case; a SAVEPOINT confines any genuine concurrent-insert race.
         try:
-            from src.controller.entity_subscriptions_manager import EntitySubscriptionsManager
-            from src.models.entity_subscriptions import EntitySubscriptionCreate
-            from src.common.errors import ConflictError
+            from sqlalchemy.exc import IntegrityError
+            from src.repositories.entity_subscriptions_repository import entity_subscription_repo
+            from src.db_models.entity_subscriptions import EntitySubscriptionDb
+            if entity_subscription_repo.find_existing(
+                db_session, entity_type="DataProduct", entity_id=str(product_id), subscriber_email=subscriber_email
+            ):
+                return  # already bridged
             try:
-                EntitySubscriptionsManager().subscribe(db_session, EntitySubscriptionCreate(
-                    entity_type="DataProduct",
-                    entity_id=str(product_id),
-                    subscriber_email=subscriber_email,
-                    subscription_reason=reason or "Subscribed via data product",
-                ))
-            except ConflictError:
-                pass  # already bridged
+                with db_session.begin_nested():  # SAVEPOINT — a race IntegrityError rolls back to here only
+                    db_session.add(EntitySubscriptionDb(
+                        entity_type="DataProduct",
+                        entity_id=str(product_id),
+                        subscriber_email=subscriber_email,
+                        subscription_reason=reason or "Subscribed via data product",
+                    ))
+            except IntegrityError:
+                pass  # a concurrent request created it first — the bridge row exists, fine
         except Exception:
             logger.exception("Failed to bridge subscription into entity_subscriptions (%s / %s)", product_id, subscriber_email)
 
@@ -3200,14 +3209,12 @@ class DataProductsManager(DeliveryMixin, SearchableAsset):
     ) -> None:
         """Remove the bridged ``entity_subscriptions`` row on unsubscribe. Idempotent; never raises."""
         try:
-            from src.controller.entity_subscriptions_manager import EntitySubscriptionsManager
-            from src.common.errors import NotFoundError
-            try:
-                EntitySubscriptionsManager().unsubscribe_by_email(
-                    db_session, entity_type="DataProduct", entity_id=str(product_id), subscriber_email=subscriber_email,
-                )
-            except NotFoundError:
-                pass  # nothing bridged
+            from src.repositories.entity_subscriptions_repository import entity_subscription_repo
+            existing = entity_subscription_repo.find_existing(
+                db_session, entity_type="DataProduct", entity_id=str(product_id), subscriber_email=subscriber_email
+            )
+            if existing:
+                entity_subscription_repo.remove(db_session, id=existing.id)
         except Exception:
             logger.exception("Failed to remove bridged entity_subscription (%s / %s)", product_id, subscriber_email)
 
