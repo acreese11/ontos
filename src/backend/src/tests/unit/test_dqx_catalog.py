@@ -62,18 +62,27 @@ class TestEnvelopeReproducesSeed:
             severity="warning",
             dimension="validity",
         )
-        assert rule["implementation"]["criticality"] == "warn"
-        assert rule["implementation"]["criticality"] == to_criticality("warning")
+        expected_crit = to_criticality("warning")
+        assert expected_crit == "warn"  # pin the literal, not just both sides of the mapping
+        assert rule["implementation"]["criticality"] == expected_crit
 
     def test_expression_defaults_to_rule_when_no_sql_expr(self):
         # _qrule uses `sql_expr or rule`; the envelope reproduces whatever expression it's given.
         from src.data.aviation.definitions import _qrule
         rule = _qrule("alt_baro_positive", "Altitude cannot be negative",
                       rule="alt_baro_ft >= 0", dimension="validity")
+        assert rule["type"] == "custom"
+        assert rule["engine"] == "dqx"
         assert rule["implementation"] == sql_expression_implementation(
             "alt_baro_ft >= 0", "Altitude cannot be negative",
             name="alt_baro_positive", criticality="error",
         )
+
+    def test_sql_expression_implementation_omits_msg_when_none(self):
+        impl = sql_expression_implementation("a > 0", None, name="n", criticality="error")
+        assert impl["check"]["arguments"] == {"expression": "a > 0"}  # no msg: null
+        with_msg = sql_expression_implementation("a > 0", "boom", name="n", criticality="error")
+        assert with_msg["check"]["arguments"] == {"expression": "a > 0", "msg": "boom"}
 
 
 class TestBuildImplementation:

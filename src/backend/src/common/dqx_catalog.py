@@ -61,7 +61,7 @@ class CheckDef:
     label: str               # plain-language label, e.g. "In allowed list"
     description: str          # one-line explainer for the picker
     grain: str                # "column" | "object"
-    args: tuple              # tuple[CheckArg, ...]
+    args: tuple[CheckArg, ...]
     example: str = ""         # a concrete worked example for the UI
     in_v1_subset: bool = False
     # name of the arg auto-filled with the property name when authored on a column
@@ -146,6 +146,8 @@ CHECK_CATALOG: tuple = (
                      help="count | sum | avg | min | max | stddev | …"),
             CheckArg("group_by", "string[]", required=False, help="Optional group-by columns."),
             CheckArg("row_filter", "sql", required=False, help="Optional SQL row filter."),
+            CheckArg("aggr_params", "string", required=False,
+                     help="Extra params for the aggregate (e.g. percentile value)."),
         ),
     ),
     CheckDef(
@@ -160,6 +162,8 @@ CHECK_CATALOG: tuple = (
                      example=["flight_key", "service_date"]),
             CheckArg("nulls_distinct", "boolean", required=False, default=True,
                      help="Treat NULLs as distinct (SQL ANSI)."),
+            CheckArg("row_filter", "sql", required=False,
+                     help="Optional SQL filter to scope the uniqueness check (e.g. per partition)."),
         ),
     ),
     CheckDef(
@@ -170,9 +174,13 @@ CHECK_CATALOG: tuple = (
         in_v1_subset=True,
         example="dep_iata ∈ airports.iata_code",
         args=(
+            # Order matches the user-facing DQX params (columns, ref_columns, ref_table);
+            # DQX's internal `ref_df_name` is omitted. Reads naturally in the UI: this
+            # table's column(s) → matching column(s) → which table.
             CheckArg("columns", "columns", help="Foreign-key column(s) in this table."),
-            CheckArg("ref_table", "string", help="Reference table (catalog.schema.table)."),
             CheckArg("ref_columns", "columns", help="Matching column(s) in the reference table."),
+            CheckArg("ref_table", "string", help="Reference table (catalog.schema.table)."),
+            CheckArg("row_filter", "sql", required=False, help="Optional SQL row filter."),
         ),
     ),
     CheckDef(
@@ -186,6 +194,8 @@ CHECK_CATALOG: tuple = (
         args=(
             CheckArg("expression", "sql", help="A boolean SQL expression (pass = True)."),
             CheckArg("msg", "string", required=False, help="Message shown on failure."),
+            CheckArg("negate", "boolean", required=False, default=False,
+                     help="Invert: fail when the expression is TRUE."),
         ),
     ),
 )
@@ -218,10 +228,13 @@ def sql_expression_implementation(
     expression: str, msg: Optional[str], *, name: str, criticality: str
 ) -> Dict[str, Any]:
     """Convenience for the ``sql_expression`` escape hatch. Produces the exact shape
-    the aviation seed's ``_qrule`` emits (the Phase-1 correctness anchor)."""
-    return build_implementation(
-        "sql_expression", {"expression": expression, "msg": msg}, name=name, criticality=criticality
-    )
+    the aviation seed's ``_qrule`` emits (the Phase-1 correctness anchor). ``msg`` is
+    omitted from the arguments when None so the stored ODCS matches what a human would
+    hand-author (no ``msg: null`` noise); DQX auto-generates a message in that case."""
+    args: Dict[str, Any] = {"expression": expression}
+    if msg is not None:
+        args["msg"] = msg
+    return build_implementation("sql_expression", args, name=name, criticality=criticality)
 
 
 # ── display (derived from the check — never a separate authored field) ───────────

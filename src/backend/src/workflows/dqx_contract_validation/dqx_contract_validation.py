@@ -193,7 +193,7 @@ def main() -> None:
         from databricks.labs.dqx.profiler.generator import DQGenerator
     except ImportError as e:
         raise SystemExit(
-            "databricks-labs-dqx is required. Install >= 0.11.0 in the job environment.\n"
+            "databricks-labs-dqx is required. Install >= 0.15.0 in the job environment.\n"
             f"Underlying ImportError: {e}"
         )
 
