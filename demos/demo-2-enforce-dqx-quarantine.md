@@ -74,20 +74,26 @@ fails to land in Gold; the pipeline doesn't crash; on-call doesn't page at 2am.
 
 **Beat 2 — DQX reads ODCS natively** · *[DO] point at slide 15 / DQX context if cut to it.*
 - **[SAY · Alan]** "Here's the part that matters: we didn't translate this contract
-  into some other rule language. **DQX reads the ODCS contract natively** — native ODCS
-  support landed in DQX last year, and the contract *is* the rule source. So there's no
-  second artifact to drift out of sync. The thing the producer agreed to is the exact
+  into some other rule language. **DQX reads the ODCS contract natively** — that shipped
+  in DQX **v0.11, back in December**, and the contract *is* the rule source. So there's
+  no second artifact to drift out of sync. The thing the producer agreed to is the exact
   thing that runs."
 - **[SAY · Alan, credibility]** "And this is open source we *work on*, not just use.
-  We're on the latest DQX — 0.15 — and when we hit a rough edge in that contract-reading
-  path building Safe Skies, we fixed it in the open: that's **DQX PR #1191, merged June
-  2nd**, shipping in the version running right here. That's the Databricks Labs flywheel —
-  hit a real-world edge, fix it upstream, everyone gets it."
-- *(Credibility beat — #1191 is a real merged fix to DQX's `datacontract` path; verify
-  the native-ODCS "last year" date against the slide-15 "What Shipped" timeline before
-  recording.)*
+  We're on the latest DQX — 0.15 — and building Safe Skies we hit a real bug: on a
+  serverless job *without* the optional LLM extras, an over-eager import was silently
+  disabling native contract reading altogether. We caught it, fixed it in the open —
+  **DQX PR #1191, merged June 2nd** — and it ships in the version running right here.
+  That's the Databricks Labs flywheel: hit a real-world edge, fix it upstream, everyone
+  gets it."
+- *(Facts verified 2026-06-17: native ODCS rule-gen shipped **DQX v0.11.0, 2025-12-01**
+  (issue #932); **PR #1191** — the import-guard fix to DQX's `datacontract` path that
+  stops it silently disabling on serverless without `[llm]` extras — **merged
+  2026-06-02**, ships in 0.15. Both survive a lookup.)*
 
 **Beat 3 — Run DQX → results** · *[DO] click **Run DQX** (results pre-warmed).*
+<!-- NUMBERS: pass=11,826 fail=24 score=99.80% are from a PRIOR run. The latest aws-dais
+     run reported 100% failure (see Readiness). Re-verify and UPDATE these counts after
+     the DQX-notebook/troubleshooting work before recording. -->
 - **[SAY · Alan]** "I run it against the live ADS-B feed — about twelve thousand rows."
   **[SEE]** results write back: **pass = 11,826 · fail = 24 · score 99.80%.**
 - **[SAY · Alan]** "Twenty-four rows broke the contract. Now watch where they go."
