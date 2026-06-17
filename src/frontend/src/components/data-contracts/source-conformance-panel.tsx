@@ -102,7 +102,7 @@ const SourceConformancePanel: React.FC<Props> = ({ contractId }) => {
     if (data.checks_failed > 0) {
       toast({
         title: 'Schema drift detected',
-        description: `${data.checks_failed} drift finding(s). Owner and subscribers notified.`,
+        description: `${data.checks_failed} drift finding(s). Owner and subscribers will be notified.`,
         variant: 'destructive',
       })
     } else {

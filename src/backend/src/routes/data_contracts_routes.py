@@ -4792,7 +4792,9 @@ async def get_contract_validation_runs(
     """Latest source-conformance validation run (with results) for a contract.
 
     Returns null when the contract has never been validated."""
-    manager = _build_contract_validation_manager(request)
+    # Read-only DB lookup — no trust-loop collaborators needed.
+    from src.controller.contract_validation_manager import ContractValidationManager
+    manager = ContractValidationManager()
     run = manager.get_latest_run(db, contract_id=contract_id)
     if run is None:
         return None

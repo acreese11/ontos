@@ -26,6 +26,7 @@ path cover the statistical/SLA side.
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
@@ -70,13 +71,19 @@ def _types_match(declared: str, live: str) -> bool:
     """True when declared and live types are compatible.
 
     Tolerant on purpose: an empty side (unknown type) never mismatches, and we
-    accept substring overlap (e.g. declared ``decimal`` vs live ``decimal(10,2)``)
-    so we only flag genuine changes (``int`` → ``double``)."""
+    accept the *parameterised* form of the same base type (declared ``decimal``
+    vs live ``decimal(10,2)``) so we only flag genuine changes. NOT plain
+    substring — ``int`` must NOT match ``bigint`` (the common widening drift we
+    most want to catch), nor ``char`` match ``varchar``."""
     if not declared or not live:
         return True
     if declared == live:
         return True
-    return declared in live or live in declared
+    # Accept only `<base>` vs `<base>(...)` in either direction.
+    return bool(
+        re.fullmatch(rf"{re.escape(declared)}(\(.*\))?", live)
+        or re.fullmatch(rf"{re.escape(live)}(\(.*\))?", declared)
+    )
 
 
 class ContractValidationManager:
@@ -295,8 +302,16 @@ class ContractValidationManager:
         Lakehouse Monitoring results back to ``data_contract_sla_properties``
         (freshness/volume/etc.) — see demo-4-maintain.md Appendix B.
         """
+        from sqlalchemy.orm import selectinload
+        # Eager-load schema objects + their properties so the diff loop doesn't
+        # issue an N+1 of SELECTs (one per object) on top of the N UC reads.
         contract: Optional[DataContractDb] = (
-            db.query(DataContractDb).filter(DataContractDb.id == contract_id).first()
+            db.query(DataContractDb)
+            .options(
+                selectinload(DataContractDb.schema_objects).selectinload(SchemaObjectDb.properties)
+            )
+            .filter(DataContractDb.id == contract_id)
+            .first()
         )
         if contract is None:
             raise ValueError(f"Contract not found: {contract_id}")
@@ -417,6 +432,13 @@ class ContractValidationManager:
         checks_passed = sum(1 for r in result_rows if r.passed)
         total = checks_passed + checks_failed
         score = round(100.0 * (checks_passed / total), 2) if total else 100.0
+
+        # If there were objects to check but NONE could be read from UC (every
+        # object errored in _live_columns), the run didn't really "succeed" — it
+        # failed to observe the source. Surface that rather than a misleading
+        # succeeded/score=0.
+        if error_message is None and schema_objects and objects_checked == 0:
+            error_message = "No schema objects could be read from Unity Catalog"
 
         run.checks_passed = checks_passed
         run.checks_failed = checks_failed

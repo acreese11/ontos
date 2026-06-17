@@ -26,7 +26,7 @@ from uuid import uuid4
 
 import pytest
 
-from src.controller.contract_validation_manager import ContractValidationManager
+from src.controller.contract_validation_manager import ContractValidationManager, _types_match
 from src.controller.quality_manager import QualityManager
 from src.controller.entity_subscriptions_manager import EntitySubscriptionsManager
 from src.controller.notifications_manager import NotificationsManager
@@ -258,3 +258,27 @@ class TestEdges:
         run = mgr.run_source_validation(db_session, contract_id=contract.id)
         assert run.checks_failed == 1
         assert "no physical_name" in (run.results[0].message or "")
+
+
+class TestTypesMatch:
+    """Pure-function type comparison: parameterised forms match, distinct base
+    types (the int→bigint widening drift) must NOT be masked by substring."""
+
+    @pytest.mark.parametrize("declared,live", [
+        ("decimal", "decimal(10,2)"),   # bare vs parameterised
+        ("decimal(10,2)", "decimal"),   # reverse
+        ("string", "string"),           # identical
+        ("", "bigint"),                 # unknown declared side → never mismatch
+        ("int", ""),                    # unknown live side
+    ])
+    def test_compatible_types_match(self, declared, live):
+        assert _types_match(declared, live) is True
+
+    @pytest.mark.parametrize("declared,live", [
+        ("int", "bigint"),              # widening drift — the regression we fixed
+        ("char", "varchar"),
+        ("int", "tinyint"),
+        ("float", "double"),
+    ])
+    def test_distinct_types_do_not_match(self, declared, live):
+        assert _types_match(declared, live) is False
