@@ -12,8 +12,9 @@ Authoring and enforcing *one* contract is the easy part; maintaining trust acros
 
 1. **Contract Coverage** — ✅ **BUILT + validated.** Is every table governed by exactly
    one contract? The runnable spine of the Maintain demo.
-2. **Violation → Notification loop** (deck slide 20) — ❌ **NOT BUILT.** When DQX rejects
-   a row, the owner + every subscriber are told. *Most differentiated; build first.* App. A.
+2. **Violation → Notification loop** (deck slide 20) — ✅ **BUILT.** When a DQX run records
+   a failure against a contract, the owner + every subscriber are notified automatically.
+   *The talk's emotional peak — the trust loop closes.* App. A.
 3. **Statistical drift / Lakehouse Monitoring** (deck slide 21) — ❌ **NOT BUILT** (cut
    candidate). Drift catches what row-level checks cannot. App. B.
 
@@ -62,10 +63,10 @@ and `>1` (conflicting governance).
 | 4 · Drift — Lakehouse Monitoring (deck slide 21) | Michael | 0:40 |
 | 5 · Button: the safety net under the whole lifecycle | Michael | 0:20 |
 
-> **Realism:** only **Beat 1 (Coverage) is built and recordable today.** Beats 3 & 4 are
-> the deck's headline Maintain beats but are **not built** — narrate them over slides
-> 20–21 as the fuller vision, or build the trust loop (App. A) if there's runway. A 5-min
-> slot is honest *with* the verbal trust-loop/drift coverage; **Coverage alone is ~2:30.**
+> **Realism:** **Beat 1 (Coverage) and Beat 3 (trust loop) are both built and recordable
+> today.** Beat 4 (drift) remains **not built** — narrate it over slide 21 as the fuller
+> vision (cut candidate). With Coverage (~2:30) + the live trust loop (~1:45), the 5-min
+> slot fills with substance, not padding.
 
 ## Talk track
 
@@ -89,12 +90,16 @@ and `>1` (conflicting governance).
   contracted yet." **[Alan, tie-back]** "`adsb_v2_raw` is exactly the table we drafted a
   contract for in the first demo — this is the gap, and the Author flow is how you close it."
 
-**Beat 3 — The trust loop** · *deck slide 20 (narrate; ❌ not built — see App. A).*
+**Beat 3 — The trust loop** · *deck slide 20 (✅ built — live or pre-recorded; see App. A).*
+- **[DO]** Fire a DQX run that records a failure against the `global_flight_ops` contract
+  (or POST a failing quality-item — recipe in App. A). **[SEE]** the **owner's** Ontos inbox
+  lights up; **[SEE]** the **subscriber's** inbox (the consumer who subscribed in Discover)
+  gets the same notification — within seconds. Click through → lands on the contract.
 - **[SAY · Michael]** "Coverage tells you what's governed. The loop tells you when governance
-  *breaks*: when DQX rejects a row against a contract, the owning team **and every subscriber**
-  are notified — within seconds." **[Alan]** "That subscription from the Discover demo is the
-  registration; the notification is Ontos closing the loop federation opened. The consumer
-  never has to chase the producer."
+  *breaks*: when a DQX run records a failure against a contract, the owning team **and every
+  subscriber** are notified — automatically." **[Alan]** "That subscription from the Discover
+  demo is the registration; the notification is Ontos closing the loop federation opened. The
+  consumer never has to chase the producer."
 
 **Beat 4 — Drift** · *deck slide 21 (narrate; ❌ not built — see App. B).*
 - **[SAY · Michael]** "And row-level checks can't see that *yesterday's* volume was normal and
@@ -129,12 +134,12 @@ data. Re-seed only if a prior take staged a conflict contract or edited governan
 
 ---
 
-## Beat 2 — Violation → Notification loop ❌ NOT BUILT
+## Beat 2 — Violation → Notification loop ✅ BUILT
 
-> *What it would add (one line):* when DQX rejects a row against the contract, the
-> contract owner **and every subscriber** receive an Ontos notification within
-> seconds — the consumer never has to chase the producer. See **Appendix A** for the
-> full readiness notes, build gaps, and target walkthrough.
+> *What it adds (one line):* when a DQX/quality run records a failure against a contract,
+> the contract owner **and every subscriber** receive an Ontos notification automatically —
+> the consumer never has to chase the producer. See **Appendix A** for how it's wired and
+> the **manual end-to-end validation recipe**.
 
 ---
 
@@ -153,11 +158,10 @@ data. Re-seed only if a prior take staged a conflict contract or edited governan
 | Beat | Source | Build status |
 |------|--------|--------------|
 | 1 · Contract Coverage | (this file) | ✅ **Built + merged** — PR #16 (feature) + PR #18 (information_schema fix). Re-validated live 2026-06-15: run `2e16ed75-…` → 26 tables, 13/13, **50.0%** |
-| 2 · Violation → Notification loop | demo-4 | ❌ **Not built** — most differentiated beat; worth building if there's runway |
+| 2 · Violation → Notification loop | demo-4 | ✅ **Built** — `QualityManager.create()` fans a contract failure out to owner + subscribers via `NotificationsManager`. Unit/integration tests in `test_quality_trust_loop.py` (6 passing). Manual e2e recipe in Appendix A; live-validate before recording. |
 | 3 · Statistical drift / Lakehouse Monitoring | demo-6 | ❌ **Not built — cut candidate** — largest build, weakest beat |
 
-Coverage is the Maintain beat that actually works today. The notification loop is the
-beat most worth *building* rather than cutting; drift is the cleanest thing to cut.
+Coverage + the trust loop both work today; drift is the cleanest thing to cut.
 
 ## Possible refinements (Beat 1 — see chat 2026-06-14, mostly deferred)
 - **Conflict example:** stage one double-governed table so a live run shows both failure
@@ -212,10 +216,10 @@ payoff.**
 
 ## Open items (re Maintain + Discovery)
 
-1. **Build the trust-loop (Beat 2)** — highest ROI; fixes the quality of *two* demos and
-   delivers the talk's thesis live. Fires on a DQX violation via `NotificationsManager` →
-   owner + all subscribers. Scope: confirm it's recordable end-to-end locally (the
-   subscriber from Discover must receive it). See **Appendix A** for build gaps.
+1. **Trust-loop (Beat 2)** — ✅ **built.** Fires on a contract quality failure via
+   `NotificationsManager` → owner + all subscribers. Remaining: **live-validate it's
+   recordable end-to-end locally** (the subscriber from Discover must receive it) using the
+   manual e2e recipe in **Appendix A**, and pin the identity continuity (open item #4).
 2. **Drift (Beat 3)** — remains optional / cut-candidate. Alan may build the Lakehouse
    Monitor; if not, keep deck slide 21 as a ~30–45s verbal + screenshot. See **Appendix B**.
 3. **→ demo-3 (Discover):** scope **using "Ask Ontos" for *discovery*** into the Discovery
@@ -229,7 +233,7 @@ payoff.**
 
 ---
 
-# Appendix A — Notification loop (demo-4, ❌ not built)
+# Appendix A — Notification loop (demo-4, ✅ built)
 
 > Originally **Slide 18** · the **Enforce → Discover** join · **~2 min** · third of
 > the 16–18 cluster (note: it plays *before* Demo 3 in slide order, but its
@@ -237,60 +241,117 @@ payoff.**
 > Co-narrated: **Alan** = subscriptions as a contract trust pattern, **Michael** =
 > operational impact ("a consumer never has to chase the producer").
 
-**Readiness: ❌ NOT BUILT.** The closed loop does not exist yet:
-- `quality_routes` / `quality_manager` make **zero** `NotificationsManager` calls
-  — a DQX/quality failure fires nothing.
-- `entity_subscriptions_manager` stores subscriptions but has **no notify path**.
-- 0 subscribers are seeded to notify anyway.
+**Readiness: ✅ BUILT.** The closed loop now exists end-to-end:
+- `QualityManager.create()` calls `notify_quality_failure()` whenever a recorded
+  quality item for a **`data_contract`** represents a failure (`checks_passed <
+  checks_total`, or — when counts are absent — `score_percent < 100`).
+- Recipients are resolved by `QualityManager.resolve_failure_recipients()`: the
+  contract **owner** (ODCS team member with `role == "owner"`) **plus** every
+  **subscriber** of any product whose output port links to the contract
+  (`DataProductsManager.get_products_by_contract` → `EntitySubscriptionsManager
+  .get_subscribers(entity_type="DataProduct")`). De-duplicated, owner first.
+- Notifications fire through the existing `NotificationsManager.create_notification`
+  — **no new notification system.** Payload: title `Quality failure: {contract}`,
+  subtitle `N rule(s) failed (...)`, and a deep link `/data-contracts/{contract_id}`.
+- A subscriber is seeded: the aviation seed subscribes `consumer@safe-skies.demo`
+  to **🎯 Global Flight Ops** (the Discover-demo consumer identity) so there's a
+  real inbox to light up. The contract owner (`operations-analytics-lead@safe-skies
+  .demo`) is notified via the contract's ODCS owner team member.
 
-**This is the most differentiated beat and it needs to be built before it can be
-recorded.** See "What it needs" below.
+**Architecture note:** the trigger lives at the *quality-recording* boundary, not
+inside DQX. Any enforcement source that writes a failing quality item against a
+contract (dqx, dbt, GE, soda, manual) fans out the same loop — Ontos observes the
+result, it doesn't own the engine. Failures here never break quality ingestion: the
+quality row is committed first, and any notification error is logged and swallowed.
 
 **The point:** subscriptions + notifications close the loop that federated
 ownership opens. The consumer doesn't ask if data is broken — they're told.
 
-## Timing budget (~2:00) — *once built*
+## Timing budget (~2:00)
 | Sub-beat | Target |
 |---|---|
-| Recap: the subscriber from Demo 2 (Alan) | 0:20 |
-| DQX rejects a row behind the scenes (callback to Demo 3) | 0:30 |
+| Recap: the subscriber from Demo 2/3 (Alan) | 0:20 |
+| DQX records a failure behind the scenes (callback to Demo 3) | 0:30 |
 | Owner's Ontos inbox receives the notification | 0:30 |
 | Subscriber's inbox receives it too — within seconds | 0:25 |
-| Notification detail: offending rule + row + one-click link to contract | 0:15 |
+| Notification detail: failed rule + count + one-click link to contract | 0:15 |
 
-## What it needs (build before recording)
-1. **Wire quality-failure → notifications.** When DQX results write back (quality
-   items with failures, or a rejection event), fire `NotificationsManager` to:
-   the **contract owner** + **every subscriber** of the product whose output port
-   uses that contract.
-2. **Notification payload:** offending rule name, the bad row (or count), and a
-   deep link to the contract.
-3. **Seed a subscription** (Demo 2's consumer) so there's a subscriber inbox to
-   show. Use the **same identity** as Demo 2.
-4. Verify both inboxes (owner + subscriber) receive it within seconds of the
-   Demo 3 rejection.
+## Manual end-to-end validation recipe (run before recording)
 
-## Walkthrough (target, once built)
+Goal: fire a real failure against the `global_flight_ops` contract and watch the
+notification land in **both** the owner's and the subscriber's Ontos inbox. Two
+ways to trigger — a real DQX run, or a direct quality-item POST (faster, identical
+loop). Either path ends in the same notification fan-out.
 
-1. **[SAY · Alan]** "In Demo 2 a consumer subscribed to Global Flight Ops. A
+**Prereqs**
+1. Load the aviation seed (Settings → Demo Data → Load Aviation, or
+   `POST /api/settings/demo-data/load-aviation`). This seeds the
+   `global_flight_ops` contract (owner team member `operations-analytics-lead@
+   safe-skies.demo`), the **🎯 Global Flight Ops** product whose output ports link
+   to it, and the subscriber **`consumer@safe-skies.demo`**.
+2. Note the contract id: Data Contracts → *global_flight_ops* → copy the id from the
+   URL (`/data-contracts/{id}`), or `GET /api/data-contracts?search=global_flight_ops`.
+
+**Path A — real DQX run (the on-camera path)**
+3a. Run the DQX/quality enforcement job that emits a `QualityItem` for the contract
+    (the Enforce demo's pipeline). Ensure at least one rule **fails** (e.g. point it
+    at the quarantine-producing input, or relax nothing so a not-null/range rule
+    trips). The job writes a quality item with `source="dqx"`, `entity_type=
+    "data_contract"`, `checks_passed < checks_total`.
+
+**Path B — direct POST (fast loop, no cluster)**
+3b. POST a failing quality item straight to the API (requires READ_WRITE on
+    `data-domains`):
+    ```bash
+    curl -X POST \
+      "$ONTOS/api/entities/data_contract/$CONTRACT_ID/quality-items" \
+      -H "Content-Type: application/json" \
+      -d '{
+            "entity_id": "'"$CONTRACT_ID"'",
+            "entity_type": "data_contract",
+            "title": "not_null_check",
+            "dimension": "completeness",
+            "source": "dqx",
+            "score_percent": 80,
+            "checks_passed": 4,
+            "checks_total": 5
+          }'
+    ```
+
+**Verify (both paths)**
+4. **Owner inbox:** log in as / impersonate `operations-analytics-lead@safe-skies.demo`
+   → Notifications → a new **warning** "Quality failure: global_flight_ops",
+   subtitle "1 rule(s) failed (not_null_check)".
+5. **Subscriber inbox:** as `consumer@safe-skies.demo` → same notification appears.
+6. **Deep link:** click it → lands on `/data-contracts/{contract_id}`.
+7. **Negative check (optional):** POST the same item with `checks_passed: 5,
+   checks_total: 5, score_percent: 100` → **no** new notification (passing run is a
+   no-op).
+
+> Notifications are filtered per-recipient by email match (see
+> `NotificationsManager.get_notifications`), so each inbox shows only its own.
+> To watch both live, use two browser sessions / two impersonated users.
+
+## Walkthrough (live or pre-recorded)
+
+1. **[SAY · Alan]** "In Demo 3 a consumer subscribed to Global Flight Ops. A
    subscription is a Data Contract trust pattern — Ontos implements it directly."
-2. **[DO]** Trigger / reference the DQX rejection from Demo 3 (the 24 quarantined
-   rows). **[SAY · Alan]** "When DQX rejects a row against the contract…"
-3. **[SEE]** The **contract owner's** Ontos inbox — a new notification: the rule
-   that failed, the row, a link to the contract.
+2. **[DO]** Trigger the DQX failure (Path A) or fire the quality-item POST (Path B
+   in the recipe above). **[SAY · Alan]** "When a DQX run records a failure against
+   the contract…"
+3. **[SEE]** The **contract owner's** Ontos inbox — a new notification: the failed
+   rule + count, and a link to the contract.
 4. **[SEE]** The **subscriber's** inbox — the same notification, within seconds.
    **[SAY · Michael]** "The consumer never has to chase the producer or wonder if
    today's data is good. They're told — automatically."
 5. **[DO]** Click the one-click link → lands on the contract. **[SAY · Alan]**
    "Subscriptions plus notifications close the loop that federated ownership opens."
 
-## Presentation fallback if not built in time
-- **Cut Demo 4 and fold its point into Demo 2/3 narration** ("…and every
-  subscriber is notified the instant DQX rejects a row — the trust loop closes").
-  Slide 18 becomes a static talking slide, not a video. Saves 2 min.
-- This is the beat most worth *building* rather than cutting — it's the strongest
-  "trust is engineered, not assumed" moment. Prioritize the build if there's
-  runway; cut only if there isn't.
+## Presentation fallback
+- If you'd rather not run it live, pre-record the two-inbox fan-out using the manual
+  recipe above; the beat is built and deterministic.
+- This is the strongest "trust is engineered, not assumed" moment in the talk — it's
+  the beat to *keep*, not cut.
 
 ## Reset between takes
 Mark notifications read / clear them; re-seed to reset subscriptions.

@@ -443,13 +443,16 @@ def load_aviation_demo(
         if not product_id:
             report["subscriptions"]["errors"].append(f"Product not found: {s['product']}")
             continue
+        # Allow an explicit subscriber_email override (e.g. the Demo 4
+        # trust-loop consumer); otherwise derive it from the team name.
+        subscriber_email = s.get("subscriber_email") or _team_email(s["subscriber_team"])
         try:
             sub_mgr.subscribe(
                 db,
                 EntitySubscriptionCreate(
                     entity_type="DataProduct",
                     entity_id=product_id,
-                    subscriber_email=_team_email(s["subscriber_team"]),
+                    subscriber_email=subscriber_email,
                     subscription_reason=f"Demo seeded — {s['subscriber_team']} subscribes to {s['product']}",
                 ),
             )

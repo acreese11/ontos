@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Dict, List, Optional, TYPE_CHECKING
+from typing import Dict, List, Optional, Set, TYPE_CHECKING
 
 from sqlalchemy.orm import Session
 
@@ -11,13 +11,29 @@ from src.db_models.change_log import ChangeLogDb
 
 if TYPE_CHECKING:
     from src.controller.data_products_manager import DataProductsManager
+    from src.controller.notifications_manager import NotificationsManager
+    from src.controller.entity_subscriptions_manager import EntitySubscriptionsManager
 
 logger = get_logger(__name__)
 
 
 class QualityManager:
-    def __init__(self, repository: QualityItemsRepository = quality_items_repo):
+    def __init__(
+        self,
+        repository: QualityItemsRepository = quality_items_repo,
+        *,
+        notifications_manager: Optional["NotificationsManager"] = None,
+        entity_subscriptions_manager: Optional["EntitySubscriptionsManager"] = None,
+        data_products_manager: Optional["DataProductsManager"] = None,
+    ):
         self._repo = repository
+        # Collaborators for the "trust loop": when a quality run records a
+        # failure against a contract, notify the contract owner + every
+        # subscriber of products built on that contract. All optional so the
+        # plain CRUD paths (and most tests) don't need to wire them.
+        self._notifications_manager = notifications_manager
+        self._entity_subscriptions_manager = entity_subscriptions_manager
+        self._data_products_manager = data_products_manager
 
     # ── helpers ──────────────────────────────────────────────────────────
 
@@ -38,7 +54,163 @@ class QualityManager:
         db.commit()
         db.refresh(obj)
         self._log_change(db, entity_type=data.entity_type, entity_id=data.entity_id, action="CREATE", username=user_email)
-        return QualityItem.model_validate(obj, from_attributes=True)
+        item = QualityItem.model_validate(obj, from_attributes=True)
+        # Trust loop: a failing quality result fans out a notification to the
+        # contract owner + every subscriber. Never let a notification problem
+        # break the (already-committed) quality ingestion.
+        try:
+            self.notify_quality_failure(db, item=item)
+        except Exception:
+            logger.exception("Quality-failure notification fan-out failed for %s/%s", item.entity_type, item.entity_id)
+        return item
+
+    # ── trust loop: failure → notify owner + subscribers ─────────────────
+
+    @staticmethod
+    def _is_failure(item: QualityItem) -> bool:
+        """A quality result counts as a failure when at least one check failed
+        (or rows were quarantined). When the run reports per-check counts we use
+        those; otherwise we fall back to a sub-100% score."""
+        if item.checks_total is not None and item.checks_passed is not None:
+            return item.checks_passed < item.checks_total
+        return item.score_percent < 100.0
+
+    @staticmethod
+    def _failed_check_count(item: QualityItem) -> Optional[int]:
+        if item.checks_total is not None and item.checks_passed is not None:
+            return max(item.checks_total - item.checks_passed, 0)
+        return None
+
+    def resolve_failure_recipients(self, db: Session, *, contract_id: str) -> List[str]:
+        """Recipients for a contract quality failure: the contract owner plus
+        every subscriber of any data product whose output port uses the
+        contract (product → output-port → contract traversal via
+        DataProductsManager.get_products_by_contract). De-duplicated, owner
+        first. Returns [] if collaborators aren't wired."""
+        recipients: List[str] = []
+        seen: Set[str] = set()
+
+        def _add(email: Optional[str]) -> None:
+            if email and email not in seen:
+                seen.add(email)
+                recipients.append(email)
+
+        _add(self._contract_owner_email(db, contract_id=contract_id))
+
+        if self._data_products_manager and self._entity_subscriptions_manager:
+            try:
+                products = self._data_products_manager.get_products_by_contract(contract_id)
+            except Exception:
+                logger.exception("Failed resolving products for contract %s", contract_id)
+                products = []
+            for product in products:
+                pid = getattr(product, "id", None)
+                if not pid:
+                    continue
+                try:
+                    summary = self._entity_subscriptions_manager.get_subscribers(
+                        db, entity_type="DataProduct", entity_id=str(pid)
+                    )
+                except Exception:
+                    logger.exception("Failed resolving subscribers for product %s", pid)
+                    continue
+                for sub in summary.subscribers:
+                    _add(sub.subscriber_email)
+
+        return recipients
+
+    def _contract_owner_email(self, db: Session, *, contract_id: str) -> Optional[str]:
+        """Owner email from the contract's ODCS team members (role == 'owner').
+        Falls back to the first team member if no explicit owner role exists."""
+        try:
+            from src.db_models.data_contracts import DataContractTeamDb
+            members = (
+                db.query(DataContractTeamDb)
+                .filter(DataContractTeamDb.contract_id == contract_id)
+                .all()
+            )
+        except Exception:
+            logger.exception("Failed loading team for contract %s", contract_id)
+            return None
+        if not members:
+            return None
+        owner = next((m for m in members if (m.role or "").lower() == "owner"), None)
+        chosen = owner or members[0]
+        return chosen.username
+
+    def _contract_name(self, db: Session, *, contract_id: str) -> str:
+        try:
+            from src.db_models.data_contracts import DataContractDb
+            row = db.query(DataContractDb).filter(DataContractDb.id == contract_id).first()
+            if row and row.name:
+                return row.name
+        except Exception:
+            logger.exception("Failed loading contract name for %s", contract_id)
+        return contract_id
+
+    def notify_quality_failure(self, db: Session, *, item: QualityItem) -> int:
+        """Fan a contract-level quality failure out to owner + subscribers.
+
+        Returns the number of notifications created. No-op (returns 0) when:
+        the item isn't a contract, isn't a failure, or NotificationsManager
+        isn't wired."""
+        if item.entity_type != "data_contract":
+            return 0
+        if not self._is_failure(item):
+            return 0
+        if self._notifications_manager is None:
+            logger.debug("NotificationsManager not wired; skipping quality-failure fan-out")
+            return 0
+
+        contract_id = item.entity_id
+        recipients = self.resolve_failure_recipients(db, contract_id=contract_id)
+        if not recipients:
+            logger.info("No recipients resolved for quality failure on contract %s", contract_id)
+            return 0
+
+        contract_name = self._contract_name(db, contract_id=contract_id)
+        rule_name = item.title or item.dimension
+        failed = self._failed_check_count(item)
+        if failed is not None:
+            rule_summary = f"{failed} rule(s) failed ({rule_name})"
+        else:
+            rule_summary = f"{rule_name} scored {item.score_percent:.0f}%"
+        link = f"/data-contracts/{contract_id}"
+        description = (
+            f"Quality enforcement ({item.source}) recorded a failure on contract "
+            f"'{contract_name}': {rule_summary}. Review the contract and downstream impact."
+        )
+
+        from src.controller.notifications_manager import NotificationsManager  # noqa: F401
+        from src.models.notifications import Notification, NotificationType
+        import uuid
+        from datetime import datetime
+
+        created = 0
+        for recipient in recipients:
+            try:
+                notification = Notification(
+                    id=str(uuid.uuid4()),
+                    type=NotificationType.WARNING,
+                    title=f"Quality failure: {contract_name}",
+                    subtitle=rule_summary,
+                    description=description,
+                    link=link,
+                    recipient=recipient,
+                    created_at=datetime.utcnow(),
+                    read=False,
+                    can_delete=True,
+                )
+                self._notifications_manager.create_notification(notification, db)
+                created += 1
+            except Exception:
+                logger.exception("Failed creating quality-failure notification for %s", recipient)
+        db.commit()
+        logger.info(
+            "Quality-failure trust loop: contract=%s recipients=%d notifications=%d",
+            contract_id, len(recipients), created,
+        )
+        return created
 
     def list(self, db: Session, *, entity_type: str, entity_id: str, limit: Optional[int] = None) -> List[QualityItem]:
         rows = self._repo.list_for_entity(db, entity_type=entity_type, entity_id=entity_id, limit=limit)

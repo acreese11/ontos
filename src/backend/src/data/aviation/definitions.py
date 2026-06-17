@@ -1094,4 +1094,14 @@ SUBSCRIPTIONS = [
     {"product": "Flight Status Events", "subscriber_team": "operations-analytics"},
     # Network Planning subscribes to Schedules
     {"product": "OAG Flight Schedules", "subscriber_team": "network-planning"},
+    # Demo 4 (Maintain) trust-loop consumer: the Discover-demo consumer who
+    # subscribed to Global Flight Ops. When a DQX run records a failure against
+    # the global_flight_ops contract, THIS subscriber + the contract owner get
+    # notified. Uses an explicit email so the live inbox in Demo 4 matches the
+    # identity used in Demo 3. (Keep this in sync with demo-4-maintain.md.)
+    {
+        "product": "🎯 Global Flight Ops",
+        "subscriber_team": "customer-comms-analytics",
+        "subscriber_email": "consumer@safe-skies.demo",
+    },
 ]
