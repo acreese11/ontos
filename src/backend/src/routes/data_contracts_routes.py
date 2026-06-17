@@ -4787,6 +4787,88 @@ async def get_contract_validation_runs(
     return _validation_run_to_read(run)
 
 
+# ============================================================================
+# Test a quality check against sample data ("Test this check")
+# ============================================================================
+
+class TestCheckRequest(BaseModel):
+    """A DQX check to dry-run over a sample of the contract's live table."""
+    function: str
+    arguments: dict = Field(default_factory=dict)
+    schema_object: Optional[str] = None  # which schema object's table; default = first
+
+
+class TestCheckResult(BaseModel):
+    previewable: bool
+    reason: Optional[str] = None          # why not previewable (dataset-level etc.)
+    physical_name: Optional[str] = None
+    predicate: Optional[str] = None       # the SQL the preview ran (transparency)
+    sampled: Optional[int] = None
+    passed: Optional[int] = None
+    failed: Optional[int] = None
+    error: Optional[str] = None
+
+
+@router.post('/data-contracts/{contract_id}/test-check', response_model=TestCheckResult)
+async def test_quality_check(
+    contract_id: str,
+    request: Request,
+    body: TestCheckRequest,
+    db: DBSessionDep,
+    _: bool = Depends(PermissionChecker('data-contracts', FeatureAccessLevel.READ_WRITE)),
+):
+    """Dry-run a DQX check over a sample of the contract's live table — the "Test this
+    check" authoring preview. Row-level checks translate to a SQL predicate run via a
+    counting query over a LIMIT-N sample on the warehouse; dataset-level / not-confidently-
+    translatable checks return ``previewable=false`` (they run at enforcement time)."""
+    from src.common.dqx_catalog import check_to_sql_predicate
+
+    predicate = check_to_sql_predicate(body.function, body.arguments)
+    if not predicate:
+        return TestCheckResult(
+            previewable=False,
+            reason="This check runs at enforcement time — no single-row sample preview available.",
+        )
+
+    contract = db.query(DataContractDb).filter(DataContractDb.id == contract_id).first()
+    if contract is None:
+        raise HTTPException(status_code=404, detail="Contract not found")
+    objects = list(contract.schema_objects or [])
+    obj = (
+        next((o for o in objects if o.name == body.schema_object), None)
+        if body.schema_object else (objects[0] if objects else None)
+    )
+    physical = (getattr(obj, 'physical_name', None) or '').strip() if obj else ''
+    if not physical:
+        return TestCheckResult(previewable=False, reason="No mapped table to test against.", predicate=predicate)
+
+    try:
+        from src.common.workspace_client import get_obo_workspace_client
+        from src.common.config import get_settings
+        from src.controller.contract_generator_manager import _run_sql
+        ws = get_obo_workspace_client(request)
+        warehouse_id = get_settings().DATABRICKS_WAREHOUSE_ID
+        if not warehouse_id:
+            return TestCheckResult(previewable=True, physical_name=physical, predicate=predicate,
+                                   error="No SQL warehouse configured for the sample preview.")
+        sample_n = 1000
+        # count_if(... IS NOT TRUE) treats both FALSE and NULL predicates as failures.
+        sql = (
+            f"SELECT count(*) AS total, count_if(({predicate}) IS NOT TRUE) AS failed "
+            f"FROM (SELECT * FROM {physical} LIMIT {sample_n}) _s"
+        )
+        rows = _run_sql(ws, warehouse_id, sql)
+        total = int(rows[0][0])
+        failed = int(rows[0][1])
+        return TestCheckResult(
+            previewable=True, physical_name=physical, predicate=predicate,
+            sampled=total, failed=failed, passed=total - failed,
+        )
+    except Exception as e:
+        logger.warning("test-check failed for contract %s (%s): %s", contract_id, body.function, e)
+        return TestCheckResult(previewable=True, physical_name=physical, predicate=predicate, error=str(e))
+
+
 def register_routes(app):
     """Register routes with the app"""
     app.include_router(router)
