@@ -174,8 +174,9 @@ CHECK_CATALOG: tuple = (
         in_v1_subset=True,
         example="dep_iata ∈ airports.iata_code",
         args=(
-            # Order follows the DQX signature (columns, ref_columns, …) and reads naturally
-            # in the UI: this table's column(s) → matching column(s) → which table.
+            # Order matches the user-facing DQX params (columns, ref_columns, ref_table);
+            # DQX's internal `ref_df_name` is omitted. Reads naturally in the UI: this
+            # table's column(s) → matching column(s) → which table.
             CheckArg("columns", "columns", help="Foreign-key column(s) in this table."),
             CheckArg("ref_columns", "columns", help="Matching column(s) in the reference table."),
             CheckArg("ref_table", "string", help="Reference table (catalog.schema.table)."),
