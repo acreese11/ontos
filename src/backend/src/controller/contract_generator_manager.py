@@ -134,6 +134,7 @@ If a column has 0 nulls in samples, mark it required. If a column has low cardin
 OUTPUT: a single JSON object, nothing else."""
 
 # Inject the live DQX check vocabulary so the prompt stays in sync with the catalog.
+assert CHECK_CATALOG, "dqx_catalog.CHECK_CATALOG is empty — generator prompt would have no check vocabulary"
 SYSTEM_PROMPT = SYSTEM_PROMPT.replace("__DQX_VOCAB__", _dqx_vocab_lines())
 
 
@@ -154,6 +155,8 @@ def _compile_quality_rules(contract: Dict[str, Any], warnings: List[str]) -> Non
         fn = check.get("function")
         args = check.get("arguments") if isinstance(check.get("arguments"), dict) else {}
         if fn not in valid_fns:
+            # Leave `check` in place as a diagnostic breadcrumb; it's not a QualityRule
+            # field so Pydantic drops it on read — the rule persists without an executable form.
             warnings.append(f"quality rule {rule.get('name', '?')!r}: unknown DQX function {fn!r}; left uncompiled")
             continue
         name = rule.get("name") or fn
