@@ -73,41 +73,50 @@ where DQX reads.
 
 ## 4. The DQX check catalog (the vocabulary — from `databricks/labs/dqx/check_funcs.py`)
 
-These are the built-in checks the authoring UI offers (each becomes
-`implementation.check = {function, arguments}`). Categorized by grain:
+Each becomes `implementation.check = {function, arguments}`. **Crucial split (per decision §12.1):
+checks that DQX already derives from ODCS property constraints are authored ONLY in the
+Constraints tab and are NOT offered in the explicit-check picker.** The picker offers only checks
+that go *beyond* a constraint. This removes all overlap — no nudge, no de-dupe needed.
 
-**Column-scoped (offered on a column / property):**
-`is_not_null` · `is_not_null_and_not_empty` · `is_not_empty` · `is_in_list` ·
-`is_not_in_list` · `is_not_null_and_is_in_list` · `is_in_range` · `is_not_in_range` ·
-`is_equal_to` · `is_not_equal_to` · `is_not_less_than` · `is_not_greater_than` ·
-`regex_match` · `is_valid_email` *(0.15)* · `is_valid_date` · `is_valid_timestamp` ·
-`is_not_null_and_not_empty_array` · `is_valid_json` · `has_json_keys` · `has_valid_json_schema` ·
-`is_older_than_n_days` · `is_not_in_future` · `is_not_in_near_future` · `is_data_fresh` ·
-`is_geo_contains`/`is_geo_covers`/`is_geo_intersects`/`is_geo_touches`/`is_geo_within` *(0.15)* ·
-**`sql_expression`** (escape hatch)
+**Constraint-derived → Constraints tab only (NOT in the explicit picker).** DQX
+`generate_predefined_rules` produces these from property fields automatically:
+| Property field | DQX check (auto) | excluded picker function |
+|---|---|---|
+| `required` | `is_not_null` | `is_not_null*` |
+| `unique` (single column) | `is_unique` | `is_unique` (single-col) |
+| `pattern` | `regex_match` | `regex_match` |
+| `minimum`/`maximum` | range | `is_in_range`, `is_not_less_than`, `is_not_greater_than` |
+| `minLength`/`maxLength` | string length | length checks |
+| date/timestamp `format` | validity | `is_valid_date`, `is_valid_timestamp` |
 
-**Dataset / aggregate / multi-column (offered at the schema-object level):**
-`is_unique` · `foreign_key` · `is_aggr_not_greater_than` · `is_aggr_not_less_than` ·
-`is_aggr_equal` · `is_aggr_not_equal` · `has_no_outliers` · `has_no_aggr_outliers` ·
-`has_no_row_anomalies` · `has_valid_schema` · `compare_datasets` ·
-`is_data_fresh_per_time_window` · `sql_query`
+**Explicit picker — column-scoped (beyond constraints):**
+`is_in_list` / `is_not_in_list` / `is_not_null_and_is_in_list` *(enum — DQX does NOT derive this
+from a constraint)* · `is_not_in_range` *(forbidden range)* · `is_data_fresh` ·
+`is_older_than_n_days` · `is_not_in_future` / `is_not_in_near_future` · `is_valid_email` *(0.15)* ·
+`is_valid_json` / `has_json_keys` / `has_valid_json_schema` · `is_not_null_and_not_empty_array` ·
+`is_geo_contains`/`covers`/`intersects`/`touches`/`within` *(0.15)* · **`sql_expression`** (escape hatch)
 
-> **Aviation fit:** the `is_geo_*` checks (0.15) are a natural beat for the Safe Skies demo —
-> e.g. `lat`/`lon` within an expected airspace polygon — worth considering for the Author/Enforce
-> talk track if time allows.
+**Explicit picker — dataset / aggregate / multi-column (object grain):**
+`is_unique` *(composite / multi-column key — single-column uniqueness is a constraint)* ·
+`foreign_key` · `is_aggr_not_greater_than` · `is_aggr_not_less_than` · `is_aggr_equal` ·
+`is_aggr_not_equal` · `has_no_outliers` · `has_no_aggr_outliers` · `has_no_row_anomalies` ·
+`has_valid_schema` · `compare_datasets` · `is_data_fresh_per_time_window` · `sql_query`
+
+> **Aviation fit:** the `is_geo_*` checks (0.15) are a natural beat for Safe Skies — e.g.
+> `lat`/`lon` within an expected airspace polygon — for the Author/Enforce talk track if time allows.
 > **Anomaly checks make LLM calls now:** in 0.15, `has_no_row_anomalies` defaults
-> `enable_ai_explanation=True` → it calls a Model Serving endpoint at run time. If we use
-> anomaly checks, set `enable_ai_explanation=False` for deterministic recording — or lean in and
-> *show* the AI explanation as a feature. Either way, a deliberate choice, not a default to inherit.
+> `enable_ai_explanation=True` → it calls a Model Serving endpoint at run time. Set
+> `enable_ai_explanation=False` for deterministic recording, or lean in and *show* the AI
+> explanation as a feature. A deliberate choice, not a default to inherit.
 
-Each catalog entry carries: a plain-language **label** ("In range", "Matches pattern",
-"In allowed list", "Unique", "Fresh within N days"), an **arguments schema** (typed fields),
-and a **grain** (column vs object). `sql_expression`/`sql_query` are the universal escape
-hatches where the author writes a predicate directly.
+Each picker entry carries: a plain-language **label** ("In allowed list", "Fresh within N days",
+"Volume not above…"), an **arguments schema** (typed fields), and a **grain** (column vs object).
 
-> v1 demo subset (surface these first; full catalog behind "more"):
-> `is_not_null`, `is_in_range`, `is_in_list`, `regex_match`, `is_unique`,
-> `is_data_fresh`, `is_aggr_not_greater_than`, `sql_expression`.
+> **v1 demo subset** (decision §12.2 — surface these first; full catalog behind "more checks").
+> All non-constraint, all compelling for the demo:
+> `is_in_list`, `is_data_fresh`, `is_aggr_not_greater_than`, `foreign_key`, `sql_expression`
+> (column picker leads with the first two + sql; object picker leads with the aggregate +
+> `foreign_key` + sql). The single-column declarative checks live in **Constraints**, not here.
 
 ## 5. The authoring user journey (the priority)
 
@@ -115,10 +124,12 @@ The model is the same at every grain; the entry point differs.
 
 ### 5a. Column-level (schema editor → property → **Quality** tab)
 1. Open a column, **Quality** tab → **Add check**.
-2. Pick a check from a **categorized, searchable list** of column-scoped DQX checks
-   (plain-language labels, not function names front-and-center).
+2. Pick a check from a **categorized, searchable list** of column-scoped **non-constraint** DQX
+   checks (plain-language labels front-and-center; the v1 subset on top, full catalog behind
+   "more checks"). Constraint-equivalent checks are deliberately **absent** here — see 5c.
 3. Fill **typed arguments** — the **column is pre-filled**; the rest are the check's params
-   (e.g. `is_in_range` → min/max; `is_in_list` → allowed values; `regex_match` → pattern).
+   (e.g. `is_in_list` → allowed values; `is_data_fresh` → timestamp column + freshness window;
+   `is_aggr_not_greater_than` → metric + limit).
 4. Set **criticality** (error / warn) and optional **governance metadata**
    (`dimension`, `businessImpact`) used by the trust loop + compliance scoring.
 5. **Escape hatch:** "Custom SQL expression" → write a predicate (e.g.
@@ -128,15 +139,36 @@ The model is the same at every grain; the entry point differs.
    and persists it on the property (`property_id`).
 
 ### 5b. Object-level (contract details → schema object → quality)
-Same flow, but the list offers **dataset/aggregate** checks (`is_unique`, `foreign_key`,
+Same flow, but the list offers **dataset/aggregate** checks (`is_unique` composite, `foreign_key`,
 `is_aggr_*`, `has_no_aggr_outliers`, `sql_query`, …). Persisted on the object (`object_id`).
 
-### 5c. Constraints stay where they belong
-Declarative single-column facts (`required`, `unique`, `pattern`, `min`/`max`, `length`)
-are authored in the **Constraints** tab as today; DQX auto-generates their checks. The
-Quality tab shows these **constraint-derived checks read-only alongside** the explicit ones,
-so authors see "icao24 already has a pattern check from its constraint" and don't duplicate.
-(Resolves the seed's literal duplication — see §10.)
+### 5c. Constraints are the *sole* home for declarative single-column rules
+Declarative single-column facts (`required`, `unique`, `pattern`, `min`/`max`, `length`,
+date/timestamp `format`) are authored in the **Constraints** tab; DQX auto-generates their
+checks. **These checks are NOT offered in the Quality picker (decision §12.1)** — there is one
+place to express "icao24 matches this regex": the column's `pattern` constraint. The Quality tab
+shows the constraint-derived checks **read-only** ("from constraints: not-null, pattern") so the
+author sees the full picture without a second authoring path. This removes the seed's literal
+duplication (§10) — and removes the cosmetic/executable split for these entirely.
+
+### 5d. Instructive authoring (the UI must teach how to craft a rule)
+Authoring DQX checks is the feature's hard part; the UI carries the teaching, not the docs:
+- **Per-check explainer:** selecting a check shows a one-line plain description + a concrete
+  *example* ("In allowed list — value must be one of a fixed set, e.g. `position_source ∈
+  {ADSB, MLAT, Mode-S}`"). Pulled from the catalog metadata, not free-typed.
+- **Inline argument help + examples** on every field (placeholder + helper text + valid
+  example), with typed inputs (a list editor for `allowed`, a number for a limit, a column
+  picker scoped to this object's columns).
+- **Live preview of the compiled check** — show the exact DQX `{function, arguments}` (and, for
+  `sql_expression`, the SQL) *as it will run*, updating as the form changes. The author always
+  sees the executable truth, never a cosmetic restatement.
+- **Validate against sample data** (stretch): "test this check" runs it over the sampled rows
+  and reports pass/fail counts before saving — the strongest "you authored a real, working
+  rule" signal, and a great demo moment.
+- **Guided empty state:** when no checks exist, suggest likely ones from the column's type/stats
+  ("this looks like an enum → add `is_in_list`?", "timestamp → add `is_data_fresh`?").
+- **Constraint cross-link:** if the author reaches for something that's really a constraint, the
+  empty state points them to the Constraints tab (the only place that authoring lives).
 
 ### What the author sees vs what runs
 The list item renders the readable form ("**icao24** — Matches pattern `^[0-9A-F]{6}$`"),
@@ -201,9 +233,11 @@ The unification must show up in the recorded demos, with one through-line:
 **"Ontos doesn't invent a quality DSL — it authors ODCS quality that DQX executes natively.
 The contract is the ruleset."**
 
-- **Author (demo-1):** when the AI generates the contract, show it producing a real DQX check
-  (e.g. `is_in_range` on `alt_baro_ft`, `regex_match` on `icao24`) — and call out that these
-  are the *exact* checks DQX will run, not descriptions. Replaces the current "inert text" gap.
+- **Author (demo-1):** when the AI generates the contract, show it producing both (a) property
+  **constraints** grounded in the samples (`icao24` `pattern`, `alt_baro_ft` `min/max`) — which
+  DQX auto-checks — and (b) a real explicit **DQX check** for something a constraint can't say
+  (e.g. `is_in_list` on `position_source`, or `is_data_fresh` on `ts_utc`). Call out that both
+  are the *exact* things DQX runs, not descriptions. Replaces the current "inert text" gap.
 - **Enforce (demo-2):** emphasize **DQX reads the ODCS contract natively** — the contract's
   quality section *is* the DQX ruleset, no translation layer. Show a check authored in Ontos
   running unchanged in DQX (`_is_dqx_explicit_rule` consumes it as-is). This is the strongest
@@ -231,19 +265,26 @@ The contract is the ruleset."**
 Sequencing rationale: Phase 1 proves the envelope against known-good DQX output before any
 surface depends on it; Phases 2–4 each become executable independently; Phase 5 lands the story.
 
-## 12. Open questions / decisions for review
+## 12. Decisions (resolved 2026-06-17)
 
-1. **Constraint vs explicit-check overlap.** When an author picks `is_not_null`/`regex_match`
-   on a column that *could* be a constraint, do we (a) nudge "set this as a constraint instead"
-   (constraints are cleaner + auto-generate), (b) allow both and de-dupe on ODCS emit, or
-   (c) not worry about it? Recommend (a) nudge + (b) de-dupe as a safety net.
-2. **v1 catalog subset** (the demo set in §4) vs exposing the full catalog immediately.
-   Recommend the subset front-and-center, full list behind "more checks".
-3. **Governance metadata** (`dimension`/`businessImpact`/`severity`→`criticality`) — keep
-   per-rule for the trust loop / compliance score (yes, recommend keep).
-4. **Back-compat / migration** for existing contracts whose rules are loose `rule` text with
-   no `implementation`: attempt envelope inference where the text maps to a known function,
-   else mark "needs re-authoring". Scope TBD.
+1. **Constraint-equivalent checks → EXCLUDE from the explicit picker (not nudge).** If a check
+   is derivable from an ODCS property constraint (not-null/unique/pattern/range/length/format —
+   see §4 table), it is authored **only** in the Constraints tab and **does not appear** in the
+   Quality picker. The Quality tab shows constraint-derived checks **read-only** for visibility.
+   One authoring path per rule; no nudge, no de-dupe. (Stronger than the original "nudge".)
+2. **Catalog surfacing → SUBSET-FIRST.** The picker leads with the curated **non-constraint** v1
+   subset (`is_in_list`, `is_data_fresh`, `is_aggr_not_greater_than`, `foreign_key`,
+   `sql_expression`); full catalog behind **"more checks"**.
+3. **Governance metadata → KEEP.** `dimension`/`businessImpact`/`severity`→`criticality` stay
+   per-rule (feed the trust loop + compliance scoring).
+4. **Back-compat → CONVERT (don't flag).** Migration **converts** existing rules: seed rules
+   already carry executable `implementation` (no-op); single-column constraint-equivalents
+   **migrate to property constraints**; remaining loose-`rule`-text rules get the catalog
+   envelope inferred where the text maps to a known check, **fall back to `sql_expression`** when
+   it's already a SQL predicate, and only the genuinely-ambiguous remainder is flagged. Default = convert.
+5. **Instructive authoring → REQUIRED (not optional polish).** The picker must teach how to craft
+   a rule — per-check explainer + example, inline argument help, **live preview of the compiled
+   DQX check**, guided empty-state suggestions, and (stretch) validate-against-sample. See §5d.
 
 ## 13. Key references
 - DQX: `databricks/labs/dqx/datacontract/contract_rules_generator.py` (`_is_dqx_explicit_rule`,
