@@ -65,23 +65,35 @@ for Maintain.
 pre-recorded videos, narrated live, in **lifecycle order: 1 Author → 2 Enforce → 3
 Discover → 4 Maintain**. (Reconcile the deck's slide order to match this flow.)
 
-| Demo | Allocated | Fits? |
-|------|-----------|-------|
-| 1 · Author (contract authoring) | ~5:00 | ✅ if scripted tight + LLM output pinned |
-| 2 · Enforce (DQX quarantine) | ~2:00 | ✅ |
-| 3 · Discover (marketplace + subscribe) | ~2:00 | ✅ |
-| 4 · Maintain (Coverage spine) | ~2:00 | ✅ Coverage built; notify loop + drift ❌ not built |
-| **Total video** | **~11 min** | **≈28% of the 40-min talk** |
+The deck agenda (slide 5 speaker notes) is the reconciled source: **4 demos, ~5 min
+each**, lifecycle order. **Single narrator per demo** (the other throws in a question):
+**Alan** owns Author + Enforce; **Michael** owns Discover + Maintain. A "5-min slot"
+is **live narration over a ~2–3 min pre-recorded video** — narration fills the slot,
+not the video runtime.
+
+| Demo | Slot | Video | Notes |
+|------|------|-------|-------|
+| 1 · Author (Alan) | ~5:00 | ~5 min | The showpiece — genuinely earns 5. |
+| 2 · Enforce (Alan; Michael Q) | ~5:00 | ~2–3 min | Earns ~4:30–5:00 with the native-ODCS + write-back beats. |
+| 3 · Discover (Michael; Alan Q) | ~5:00 | ~2–3 min | Thinnest — realistically ~3:30; give the slack back if it drags. |
+| 4 · Maintain (Michael) | ~5:00 | ~2–3 min | Coverage built; notify loop + drift ❌ not built. |
+| **Total stage time** | **~20 min** | | **≈50% of the 40-min talk — demo-heavy by design (field report).** |
 
 > The Maintain beats (Contract Coverage, notification loop, drift) are consolidated in
 > [`demo-4-maintain.md`](demo-4-maintain.md). Contract Coverage is the built spine; the
 > notify-loop and drift beats are unbuilt, folded into that file.
 
-**Per-demo budgets are appropriate** — each fits its slot. With Genie cut and only the
-built Maintain spine, demo video is **~11 min (~28%)** of the 40-min co-presented slot —
-a healthy ratio with room for live co-narration drift.
+**Realism call:** the agenda's "5 each" is a round-number budget. Author earns 5;
+Enforce ~4:30; Discover ~3:30; Maintain depends on what's built. Don't pad to 5 with
+clicks — narration plus the cross-demo callbacks (the lifecycle slide, Enforce→Discover
+trust-signal handoff) is what fills the slot honestly.
 
 **Build runway, if pursuing the unbuilt Maintain beats:** the **notify-loop (trust loop)**
 is the most differentiated and worth building first; the **drift beat** is the largest
-build and the cut candidate — keep its slide as a static talking point (~20–30s verbal)
-rather than a video if it isn't ready.
+build and the cut candidate — keep its slide (deck slide 21) as a static talking point
+(~20–30s verbal) rather than a video if it isn't ready.
+
+**Deck note (Genie cut — decided 2026-06-14):** the Genie demo is cut. The Genie slide
+(deck slide 22, "Demo 5 — Trusted Genie Answers") should be **removed from the deck**.
+It's already out of the agenda's demo lineup; this just makes the deck match. (Deck
+edit is Alan's to make — noted here as the recommendation, not done in this repo.)
