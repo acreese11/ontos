@@ -1760,6 +1760,10 @@ class DataContractsManager(DeliveryMixin, SearchableAsset):
         # Per-schema quality rules (DQX-compatible) attach to the schema, not the contract.
         # See fix #1 in plans/dais-critical-review.md.
         schema_quality_work: list[tuple[str, list]] = []
+        # Per-property (column-level) quality rules — persist with BOTH object_id and
+        # property_id so column-level DQX checks (e.g. authored in the schema editor's
+        # Quality tab) round-trip and execute. Collected here, persisted after flush.
+        property_quality_work: list[tuple[str, str, list]] = []
 
         for schema_obj_data in schema_data:
             if hasattr(schema_obj_data, 'model_dump'):
@@ -1849,6 +1853,11 @@ class DataContractsManager(DeliveryMixin, SearchableAsset):
                 )
                 all_properties.append(prop)
 
+                # Collect per-property quality rules to persist after flush (need prop_id).
+                prop_quality = prop_dict.get('quality') or []
+                if prop_quality:
+                    property_quality_work.append((schema_obj_id, prop_id, prop_quality))
+
                 # Collect property-level relationships (ODCS v3.1.0)
                 for rel_data in (prop_dict.get('relationships') or []):
                     if isinstance(rel_data, dict):
@@ -1890,45 +1899,62 @@ class DataContractsManager(DeliveryMixin, SearchableAsset):
             db.add_all(all_prop_relationships)
         db.flush()
 
-        # Persist schema-level quality rules after the schema objects exist.
-        # DQX 0.14+ reads rules from each schema's quality list (not the
-        # contract-level qualityRules), so these need a real object_id FK.
-        # `implementation` is a Text column on the DB but ODCS shape is a dict
-        # (DQX needs check/arguments/name/criticality) — JSON-encode for storage.
+        # Persist quality rules after the schema objects + properties exist.
+        # DQX 0.14+ reads rules from each schema's quality list (object-level) and from
+        # each property's quality list (column-level) — not the contract-level
+        # qualityRules — so these need real object_id / property_id FKs.
+        # `implementation` is a Text column on the DB but the DQX shape is a dict
+        # (check/arguments/name/criticality) — JSON-encode dicts for storage; strings
+        # (the picker emits a JSON string) pass through unchanged.
+        def _quality_check_db(rule_data, *, object_id: str, property_id: Optional[str] = None) -> DataQualityCheckDb:
+            rule_dict = rule_data.model_dump() if hasattr(rule_data, 'model_dump') else rule_data
+            impl = rule_dict.get('implementation')
+            if isinstance(impl, dict):
+                impl = json.dumps(impl)
+            return DataQualityCheckDb(
+                object_id=object_id,
+                property_id=property_id,
+                stable_id=rule_dict.get('id'),
+                # A property-bound rule is always property-level, regardless of what the
+                # payload's `level` says (keeps level + property_id consistent).
+                level=('property' if property_id else rule_dict.get('level', 'object')),
+                name=rule_dict.get('name'),
+                description=rule_dict.get('description'),
+                dimension=rule_dict.get('dimension'),
+                business_impact=rule_dict.get('businessImpact') or rule_dict.get('business_impact'),
+                method=rule_dict.get('method'),
+                schedule=rule_dict.get('schedule'),
+                scheduler=rule_dict.get('scheduler'),
+                severity=rule_dict.get('severity'),
+                type=rule_dict.get('type', 'library'),
+                unit=rule_dict.get('unit'),
+                tags=rule_dict.get('tags'),
+                rule=rule_dict.get('rule'),
+                query=rule_dict.get('query'),
+                engine=rule_dict.get('engine'),
+                implementation=impl,
+                must_be=rule_dict.get('mustBe') or rule_dict.get('must_be'),
+                must_not_be=rule_dict.get('mustNotBe') or rule_dict.get('must_not_be'),
+                must_be_gt=rule_dict.get('mustBeGt') or rule_dict.get('must_be_gt'),
+                must_be_ge=rule_dict.get('mustBeGe') or rule_dict.get('must_be_ge'),
+                must_be_lt=rule_dict.get('mustBeLt') or rule_dict.get('must_be_lt'),
+                must_be_le=rule_dict.get('mustBeLe') or rule_dict.get('must_be_le'),
+                must_be_between_min=rule_dict.get('mustBeBetweenMin') or rule_dict.get('must_be_between_min'),
+                must_be_between_max=rule_dict.get('mustBeBetweenMax') or rule_dict.get('must_be_between_max'),
+                must_not_between_min=rule_dict.get('mustNotBetweenMin') or rule_dict.get('must_not_between_min'),
+                must_not_between_max=rule_dict.get('mustNotBetweenMax') or rule_dict.get('must_not_between_max'),
+            )
+
+        # Object-level (schema) quality rules.
         for schema_obj_id, quality_rules in schema_quality_work:
             for rule_data in quality_rules:
-                rule_dict = rule_data.model_dump() if hasattr(rule_data, 'model_dump') else rule_data
-                impl = rule_dict.get('implementation')
-                if isinstance(impl, dict):
-                    impl = json.dumps(impl)
-                db.add(DataQualityCheckDb(
-                    object_id=schema_obj_id,
-                    stable_id=rule_dict.get('id'),
-                    level=rule_dict.get('level', 'object'),
-                    name=rule_dict.get('name'),
-                    description=rule_dict.get('description'),
-                    dimension=rule_dict.get('dimension'),
-                    business_impact=rule_dict.get('businessImpact') or rule_dict.get('business_impact'),
-                    method=rule_dict.get('method'),
-                    schedule=rule_dict.get('schedule'),
-                    scheduler=rule_dict.get('scheduler'),
-                    severity=rule_dict.get('severity'),
-                    type=rule_dict.get('type', 'library'),
-                    unit=rule_dict.get('unit'),
-                    tags=rule_dict.get('tags'),
-                    rule=rule_dict.get('rule'),
-                    query=rule_dict.get('query'),
-                    engine=rule_dict.get('engine'),
-                    implementation=impl,
-                    must_be=rule_dict.get('mustBe') or rule_dict.get('must_be'),
-                    must_not_be=rule_dict.get('mustNotBe') or rule_dict.get('must_not_be'),
-                    must_be_gt=rule_dict.get('mustBeGt') or rule_dict.get('must_be_gt'),
-                    must_be_ge=rule_dict.get('mustBeGe') or rule_dict.get('must_be_ge'),
-                    must_be_lt=rule_dict.get('mustBeLt') or rule_dict.get('must_be_lt'),
-                    must_be_le=rule_dict.get('mustBeLe') or rule_dict.get('must_be_le'),
-                    must_be_between_min=rule_dict.get('mustBeBetweenMin') or rule_dict.get('must_be_between_min'),
-                    must_be_between_max=rule_dict.get('mustBeBetweenMax') or rule_dict.get('must_be_between_max'),
-                ))
+                db.add(_quality_check_db(rule_data, object_id=schema_obj_id))
+
+        # Property-level (column) quality rules — bound to their property via property_id
+        # so the schema editor's per-column Quality tab round-trips and executes.
+        for schema_obj_id, prop_id, quality_rules in property_quality_work:
+            for rule_data in quality_rules:
+                db.add(_quality_check_db(rule_data, object_id=schema_obj_id, property_id=prop_id))
 
         # Process semantic links after bulk insert
         if schema_semantic_work or prop_semantic_work:
