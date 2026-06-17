@@ -8,6 +8,7 @@ from src.common.features import FeatureAccessLevel
 from src.common.authorization import PermissionChecker
 from src.common.logging import get_logger
 from src.controller.quality_manager import QualityManager
+from src.common.dqx_catalog import serialize_catalog
 from src.models.quality import QualityItem, QualityItemCreate, QualityItemUpdate, QualitySummary
 
 logger = get_logger(__name__)
@@ -36,6 +37,18 @@ _QUALITY_ENTITY_LOOKUP = {
     "data_contract": ("src.repositories.data_contracts_repository", "data_contract_repo"),
     "data_product": ("src.repositories.data_products_repository", "data_product_repo"),
 }
+
+
+@router.get("/quality/dqx-check-catalog")
+async def get_dqx_check_catalog(
+    _: bool = Depends(PermissionChecker("data-contracts", FeatureAccessLevel.READ_ONLY)),
+):
+    """The DQX check catalog for the quality-rule authoring picker.
+
+    Static (no DB): the explicit, non-constraint DQX checks the UI offers (function +
+    typed-argument schema + UI metadata), plus the constraint-derived functions the UI
+    should redirect to the property's Constraints tab. See ``common/dqx_catalog``."""
+    return serialize_catalog()
 
 
 def _verify_entity_exists(db, *, entity_type: str, entity_id: str) -> None:
