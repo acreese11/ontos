@@ -170,5 +170,6 @@ class TestSerialize:
                 assert {"name", "type", "required"} <= set(a)
 
     def test_no_constraint_derived_in_serialized_checks(self):
-        fns = {c["function"] for c in serialize_catalog()["checks"]}
-        assert fns.isdisjoint(set(serialize_catalog()["constraint_derived_functions"]))
+        data = serialize_catalog()
+        fns = {c["function"] for c in data["checks"]}
+        assert fns.isdisjoint(set(data["constraint_derived_functions"]))

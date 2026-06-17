@@ -8,6 +8,7 @@ from src.common.features import FeatureAccessLevel
 from src.common.authorization import PermissionChecker
 from src.common.logging import get_logger
 from src.controller.quality_manager import QualityManager
+from src.common.dqx_catalog import serialize_catalog
 from src.models.quality import QualityItem, QualityItemCreate, QualityItemUpdate, QualitySummary
 
 logger = get_logger(__name__)
@@ -47,7 +48,6 @@ async def get_dqx_check_catalog(
     Static (no DB): the explicit, non-constraint DQX checks the UI offers (function +
     typed-argument schema + UI metadata), plus the constraint-derived functions the UI
     should redirect to the property's Constraints tab. See ``common/dqx_catalog``."""
-    from src.common.dqx_catalog import serialize_catalog
     return serialize_catalog()
 
 
