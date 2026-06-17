@@ -16,6 +16,7 @@ from src.common.dqx_catalog import (
     to_display,
     catalog,
     serialize_catalog,
+    check_to_sql_predicate,
     CHECK_CATALOG,
     CONSTRAINT_DERIVED_FUNCTIONS,
 )
@@ -173,3 +174,37 @@ class TestSerialize:
         data = serialize_catalog()
         fns = {c["function"] for c in data["checks"]}
         assert fns.isdisjoint(set(data["constraint_derived_functions"]))
+
+
+class TestCheckToSqlPredicate:
+    def test_sql_expression_passthrough(self):
+        assert check_to_sql_predicate("sql_expression", {"expression": "a > b"}) == "a > b"
+
+    def test_in_list_quotes_and_allows_null(self):
+        p = check_to_sql_predicate("is_in_list", {"column": "s", "allowed": ["A", "O'B"]})
+        assert "s IN ('A', 'O''B')" in p and "s IS NULL" in p  # escaped + null-tolerant
+
+    def test_not_in_list(self):
+        p = check_to_sql_predicate("is_not_in_list", {"column": "s", "forbidden": ["X"]})
+        assert "NOT IN ('X')" in p
+
+    def test_data_fresh(self):
+        assert "INTERVAL 60 MINUTES" in check_to_sql_predicate("is_data_fresh", {"column": "ts", "max_age_minutes": 60})
+
+    def test_not_in_future(self):
+        assert "current_timestamp()" in check_to_sql_predicate("is_not_in_future", {"column": "ts"})
+
+    def test_dataset_level_returns_none(self):
+        for fn in ("is_unique", "foreign_key", "is_aggr_not_greater_than", "has_no_aggr_outliers"):
+            assert check_to_sql_predicate(fn, {"columns": ["a"]}) is None
+
+    def test_not_confidently_translatable_returns_none(self):
+        assert check_to_sql_predicate("is_valid_email", {"column": "e"}) is None
+        assert check_to_sql_predicate("is_geo_within", {"column": "g"}) is None
+
+    def test_empty_list_returns_none(self):
+        assert check_to_sql_predicate("is_in_list", {"column": "s", "allowed": []}) is None
+
+    def test_string_literals_escaped_against_injection(self):
+        p = check_to_sql_predicate("is_in_list", {"column": "s", "allowed": ["x'; DROP TABLE t; --"]})
+        assert "x''; DROP TABLE t; --" in p  # single quotes doubled

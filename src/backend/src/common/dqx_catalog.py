@@ -297,3 +297,53 @@ def serialize_catalog() -> Dict[str, Any]:
         "checks": [_serialize_check(c) for c in CHECK_CATALOG],
         "constraint_derived_functions": sorted(CONSTRAINT_DERIVED_FUNCTIONS),
     }
+
+
+# ── sample-preview ("Test this check") — check → SQL predicate ────────────────────
+def _sql_str_literal(value: Any) -> str:
+    """Single-quoted SQL string literal with quotes escaped."""
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def check_to_sql_predicate(function: str, arguments: Dict[str, Any]) -> Optional[str]:
+    """Translate a DQX check into a SQL boolean predicate that is TRUE for PASSING rows,
+    for the sample-preview ("Test this check") path.
+
+    Returns ``None`` for checks that can't be faithfully previewed as a single-row
+    predicate — dataset/aggregate-level (is_unique/foreign_key/is_aggr_*) or checks
+    whose exact DQX pass/fail semantics we don't want to approximate. The caller surfaces
+    ``None`` as "preview runs at enforcement time" rather than guessing. We under-support
+    on purpose: a graceful N/A beats a misleading preview."""
+    args = arguments or {}
+    col = args.get("column")
+
+    if function == "sql_expression":
+        return (args.get("expression") or "").strip() or None
+
+    if function == "is_in_list" and col:
+        vals = args.get("allowed") or []
+        if not vals:
+            return None
+        lits = ", ".join(_sql_str_literal(v) for v in vals)
+        return f"({col} IS NULL OR {col} IN ({lits}))"  # DQX is_in_list allows nulls
+
+    if function == "is_not_in_list" and col:
+        vals = args.get("forbidden") or []
+        if not vals:
+            return None
+        lits = ", ".join(_sql_str_literal(v) for v in vals)
+        return f"({col} IS NULL OR {col} NOT IN ({lits}))"
+
+    if function == "is_data_fresh" and col:
+        n = args.get("max_age_minutes")
+        try:
+            n = int(n)
+        except (TypeError, ValueError):
+            return None
+        return f"{col} >= current_timestamp() - INTERVAL {n} MINUTES"
+
+    if function in ("is_not_in_future", "is_not_in_near_future") and col:
+        return f"({col} IS NULL OR {col} <= current_timestamp())"
+
+    # Dataset-level or not-confidently-translatable (regex/date/json/geo) → no row preview.
+    return None
