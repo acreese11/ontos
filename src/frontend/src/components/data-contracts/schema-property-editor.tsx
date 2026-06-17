@@ -1208,6 +1208,9 @@ function SchemaPropertyEditorInner(
         }}
         initial={editingQualityCheckIndex !== null ? qualityChecks[editingQualityCheckIndex] : undefined}
         onSubmit={editingQualityCheckIndex !== null ? handleUpdateQualityCheck : handleAddQualityCheck}
+        grain="column"
+        column={name}
+        availableColumns={properties.map((p) => p.name).filter(Boolean)}
       />
     </div>
   )
