@@ -38,7 +38,7 @@ statistical safety net. Beats 2 and 3 connect — a drift finding *fires* the lo
 |---|---|---|
 | 0 · Frame Maintain + callback to lifecycle slide | Michael | 0:25 |
 | 1 · Compliance: run Contract Coverage → 50% + read the gaps | Michael (Alan: how the rule works) | 1:05 |
-| 2 · Drift detection: contract vs live `adsb_v2` → schema drift | Alan (Michael: why it matters) | 1:15 |
+| 2 · Drift detection: contract vs live `adsb_v2` → schema drift | Michael (Alan: contract-as-spec mechanic) | 1:15 |
 | 3 · Notification loop: drift/DQX failure → owner + subscriber told (slide 20) | Michael (Alan: arch) | 1:25 |
 | 4 · Lakehouse Monitoring: the statistical layer (slide 21) | Michael | 0:35 |
 | 5 · Button: the safety net under the whole lifecycle | Michael | 0:15 |
@@ -65,11 +65,11 @@ statistical safety net. Beats 2 and 3 connect — a drift finding *fires* the lo
   exactly one contract. We're at **50%** — 13 governed, 13 not." **[Alan, brief]** "One rule —
   `contract_count = 1` — and it catches both failure modes: zero contracts, or two conflicting."
 - **[SEE]** the ungoverned tables — `adsb_v2_raw`, `oag_schedule_raw`, the `*_raw`/`*_quarantine`
-  landing tables. **[Alan, tie-back]** "`adsb_v2_raw` is the exact table we drafted a contract
+  landing tables. **[SAY · Michael]** "`adsb_v2_raw` is the exact table we drafted a contract
   for in the Author demo — coverage is how you *find* the gap; Author is how you close it."
 
 **Beat 2 — Drift detection** · *[DO] open the **live_flights** contract (`safe_skies.flight_ops.adsb_v2`) → Source Conformance panel → Run.*
-- **[SAY · Alan]** "Coverage tells you a table *has* a contract. It doesn't tell you the table
+- **[SAY · Michael]** "Coverage tells you a table *has* a contract. It doesn't tell you the table
   still *matches* it. Schemas drift — someone widens a column, adds a field, drops one. So we
   validate the contract's declared schema against the *live* Unity Catalog table."
 - **[SEE]** the panel returns drift findings — e.g. **`alt_baro_ft` type `integer → bigint`**, a
@@ -77,7 +77,7 @@ statistical safety net. Beats 2 and 3 connect — a drift finding *fires* the lo
   names the column and the exact change.
 - **[SAY · Michael]** "This is the failure DQX can't see. DQX checks the *rows* — is the altitude
   non-negative. This checks the *shape* — did the table stop matching the promise. Same table
-  from the Enforce demo, a different class of break." **[Alan]** "And it's the contract itself
+  from the Enforce demo, a different class of break." **[Alan, brief]** "And it's the contract itself
   doing the checking — the declared schema is the spec; the live table is the implementation."
 
 **Beat 3 — Notification loop** · *deck slide 20 (✅ built — live or pre-recorded; see App. A).*
@@ -86,9 +86,9 @@ statistical safety net. Beats 2 and 3 connect — a drift finding *fires* the lo
   Discover) gets the same notification — within seconds. Click through → lands on the contract.
 - **[SAY · Michael]** "Coverage finds gaps, drift finds breaks — but neither matters unless the
   right people hear about it. When governance breaks, whether it's a DQX rule or a schema drift,
-  the owning team **and every subscriber** are notified, automatically." **[Alan]** "Same trust
-  loop, two triggers. That subscription from Discover is the registration; the notification is
-  Ontos closing the loop federation opened. The consumer never has to chase the producer."
+  the owning team **and every subscriber** are notified, automatically — the consumer never has to
+  chase the producer." **[Alan, brief]** "Same trust loop, two triggers: that subscription from
+  Discover is the registration; the notification is Ontos closing the loop federation opened."
 
 **Beat 4 — Lakehouse Monitoring** · *deck slide 21 (narrate; ⚠️ Databricks-UI path — see App. C).*
 - **[SAY · Michael]** "There's one more layer. Row-level checks and schema checks both miss that
