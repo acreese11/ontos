@@ -22,7 +22,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import sys
 import tempfile
 import urllib.error
 import urllib.request
@@ -35,31 +34,14 @@ from pyspark.sql import functions as F
 from databricks.sdk import WorkspaceClient
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Workaround for databrickslabs/dqx#1168.
-#
-# DQX 0.14's contract_rules_generator.py has an UNCONDITIONAL top-of-file
-# `from databricks.labs.dqx.llm.llm_engine import DQLLMEngine` — used only as
-# a type annotation (`DQLLMEngine | None`). When [llm] extras aren't
-# installed, that import raises ImportError, which a broad try/except in
-# profiler/generator.py catches and turns into `DATACONTRACT_ENABLED = False`.
-# DQGenerator.generate_rules_from_contract then raises MissingParameterError
-# with a misleading "install datacontract-cli" message.
-#
-# We stub the module into sys.modules before any DQX import runs. The
-# annotation resolves to the stub class; runtime never touches it because we
-# call generate_rules_from_contract with process_text_rules=False (the only
-# path that actually instantiates DQLLMEngine).
-#
-# Delete this once databrickslabs/dqx#1168 ships and we bump DQX past it.
-# ──────────────────────────────────────────────────────────────────────────────
-import types as _types  # noqa: E402
-if "databricks.labs.dqx.llm.llm_engine" not in sys.modules:
-    _llm_stub = _types.ModuleType("databricks.labs.dqx.llm.llm_engine")
-    class _StubDQLLMEngine:  # noqa: N801
-        """Stub for databrickslabs/dqx#1168 — never instantiated."""
-    _llm_stub.DQLLMEngine = _StubDQLLMEngine
-    sys.modules["databricks.labs.dqx.llm.llm_engine"] = _llm_stub
+# NOTE: a databricks/dqx#1168 LLM-import workaround used to live here — a
+# sys.modules stub for `databricks.labs.dqx.llm.llm_engine`, needed because DQX
+# 0.14's contract_rules_generator.py imported `DQLLMEngine` unconditionally
+# (only for a type annotation), breaking contract rule-gen without the [llm]
+# extra. Our upstream fix #1191 shipped in DQX 0.15.0, so the stub is gone and
+# the requirements floor is pinned to >=0.15.0 (see the YAML). If a run ever
+# fails on that LLM import, the workflow env resolved an older DQX — restore the
+# pin/stub.
 
 
 # ──────────────────────────────────────────────────────────────────────────────

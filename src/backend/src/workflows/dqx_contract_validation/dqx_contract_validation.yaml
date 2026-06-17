@@ -10,7 +10,7 @@ environments:
       # the highest version compatible with this client's Python.
       client: "5"
       dependencies:
-        - "databricks-labs-dqx>=0.11.0"
+        - "databricks-labs-dqx>=0.15.0"
         - "datacontract-cli"
 
 tasks:
