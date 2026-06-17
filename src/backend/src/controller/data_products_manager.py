@@ -3169,6 +3169,48 @@ class DataProductsManager(DeliveryMixin, SearchableAsset):
 
     # ==================== Subscription Methods ====================
 
+    def _ensure_entity_subscription(
+        self, db_session: Session, *, product_id: str, subscriber_email: str, reason: Optional[str] = None
+    ) -> None:
+        """Bridge a product subscription into ``entity_subscriptions`` (entity_type
+        ``DataProduct``) so the quality/drift trust loop — which resolves recipients from
+        ``entity_subscriptions`` (``QualityManager.resolve_failure_recipients`` →
+        ``get_subscribers(entity_type="DataProduct")``) — actually notifies UI subscribers.
+        Without this, the Subscribe button writes only ``data_product_subscriptions``, which
+        the trust loop never reads. Idempotent; never raises (a bridge failure must not
+        break the subscribe)."""
+        try:
+            from src.controller.entity_subscriptions_manager import EntitySubscriptionsManager
+            from src.models.entity_subscriptions import EntitySubscriptionCreate
+            from src.common.errors import ConflictError
+            try:
+                EntitySubscriptionsManager().subscribe(db_session, EntitySubscriptionCreate(
+                    entity_type="DataProduct",
+                    entity_id=str(product_id),
+                    subscriber_email=subscriber_email,
+                    subscription_reason=reason or "Subscribed via data product",
+                ))
+            except ConflictError:
+                pass  # already bridged
+        except Exception:
+            logger.exception("Failed to bridge subscription into entity_subscriptions (%s / %s)", product_id, subscriber_email)
+
+    def _remove_entity_subscription(
+        self, db_session: Session, *, product_id: str, subscriber_email: str
+    ) -> None:
+        """Remove the bridged ``entity_subscriptions`` row on unsubscribe. Idempotent; never raises."""
+        try:
+            from src.controller.entity_subscriptions_manager import EntitySubscriptionsManager
+            from src.common.errors import NotFoundError
+            try:
+                EntitySubscriptionsManager().unsubscribe_by_email(
+                    db_session, entity_type="DataProduct", entity_id=str(product_id), subscriber_email=subscriber_email,
+                )
+            except NotFoundError:
+                pass  # nothing bridged
+        except Exception:
+            logger.exception("Failed to remove bridged entity_subscription (%s / %s)", product_id, subscriber_email)
+
     def subscribe(
         self,
         product_id: str,
@@ -3240,6 +3282,12 @@ class DataProductsManager(DeliveryMixin, SearchableAsset):
                     subscribed=True,
                     subscription=Subscription.model_validate(existing)
                 )
+                # Backfill the entity_subscriptions bridge for users who subscribed before
+                # this existed — re-subscribing repairs the trust-loop recipient set.
+                self._ensure_entity_subscription(
+                    db_session, product_id=product_id, subscriber_email=subscriber_email, reason=reason
+                )
+                db_session.commit()
                 # Fire on_subscribe trigger even for the duplicate path so all
                 # subscribe call sites consistently surface the event (matches
                 # the prior route-handler behavior that fired regardless of
@@ -3263,6 +3311,12 @@ class DataProductsManager(DeliveryMixin, SearchableAsset):
                 reason=reason,
                 on_behalf_of_type=on_behalf_of.type if on_behalf_of else None,
                 on_behalf_of_value=on_behalf_of.value if on_behalf_of else None,
+            )
+
+            # Bridge into entity_subscriptions so the quality/drift trust loop notifies
+            # this subscriber (committed atomically with the subscription below).
+            self._ensure_entity_subscription(
+                db_session, product_id=product_id, subscriber_email=subscriber_email, reason=reason
             )
 
             # Log to change log for audit
@@ -3476,6 +3530,10 @@ class DataProductsManager(DeliveryMixin, SearchableAsset):
                     product_id=product_id,
                     subscriber_email=subscriber_email,
                     action="UNSUBSCRIBE"
+                )
+                # Remove the bridged entity_subscriptions row too.
+                self._remove_entity_subscription(
+                    db_session, product_id=product_id, subscriber_email=subscriber_email
                 )
                 db_session.commit()
                 logger.info(f"User {subscriber_email} unsubscribed from product {product_id}")
