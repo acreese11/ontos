@@ -4843,11 +4843,15 @@ async def test_quality_check(
         return TestCheckResult(previewable=False, reason="No mapped table to test against.", predicate=predicate)
 
     try:
-        from src.common.workspace_client import get_obo_workspace_client
+        from src.common.workspace_client import get_workspace_client
         from src.common.config import get_settings
         from src.controller.contract_generator_manager import _run_sql
-        ws = get_obo_workspace_client(request)
-        warehouse_id = get_settings().DATABRICKS_WAREHOUSE_ID
+        settings = get_settings()
+        # Use the app's configured client (config profile / host+token) for the warehouse
+        # query — the proven path the generator uses. OBO tokens don't reliably run
+        # statement_execution in local dev.
+        ws = get_workspace_client(settings)
+        warehouse_id = settings.DATABRICKS_WAREHOUSE_ID
         if not warehouse_id:
             return TestCheckResult(previewable=True, physical_name=physical, predicate=predicate,
                                    error="No SQL warehouse configured for the sample preview.")
@@ -4857,7 +4861,8 @@ async def test_quality_check(
             f"SELECT count(*) AS total, count_if(({predicate}) IS NOT TRUE) AS failed "
             f"FROM (SELECT * FROM {physical} LIMIT {sample_n}) _s"
         )
-        rows = _run_sql(ws, warehouse_id, sql)
+        # Generous timeout: a serverless SQL warehouse may cold-start (~30-60s).
+        rows = _run_sql(ws, warehouse_id, sql, timeout_s=120)
         total = int(rows[0][0])
         failed = int(rows[0][1])
         return TestCheckResult(
