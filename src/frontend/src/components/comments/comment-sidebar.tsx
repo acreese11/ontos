@@ -631,10 +631,10 @@ const CommentSidebar: React.FC<CommentSidebarProps> = ({
           <div className="flex items-center gap-2">
             <Avatar className="w-5 h-5">
               <div className="w-5 h-5 rounded-full bg-primary/10 flex items-center justify-center">
-                {entry.username.charAt(0).toUpperCase()}
+                {(entry.username || 'Unknown').charAt(0).toUpperCase()}
               </div>
             </Avatar>
-            <span>{entry.username}</span>
+            <span>{entry.username || 'Unknown'}</span>
             <RelativeDate date={new Date(entry.timestamp)} />
             {entry.updated_at && (
               <span className="italic">(edited)</span>
