@@ -154,6 +154,13 @@ ALTER TABLE safe_skies.flight_ops.adsb_v2 ADD COLUMN ingest_batch_id STRING;
 See **Appendix A** — the manual end-to-end validation recipe (run before recording). Note the
 **local-auth caveat**: the two-inbox *visual* needs a deployed app with two sign-ins.
 
+> **✅ Subscribe→notify bridge wired (2026-06-17).** The product **Subscribe** button now
+> mirrors into `entity_subscriptions` — the table the trust loop actually reads
+> (`QualityManager.resolve_failure_recipients` → `get_subscribers("DataProduct")`). Before
+> this fix the two tables were unbridged, so a consumer who subscribed *through the UI* would
+> never have been notified. Browser-verified end-to-end — so the subscriber-inbox beat is now
+> real live behavior, not a mock. **Requires a redeploy to be live on the demo app.**
+
 ---
 
 ## Gotchas

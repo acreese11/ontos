@@ -76,7 +76,8 @@
 - **[SAY]** "The contract does — it carries the governance, not a wiki page. That
   classification drives who can see what downstream."
 - **[DO]** Add Rule → one quality rule (not-null on `flight_key`). **[SAY]** "And one quality
-  rule — watch this exact rule get enforced in the next demo."
+  rule. Watch — this exact rule compiles into a running DQX check in the next demo. The
+  contract becomes the ruleset." *(One line only — the quality story is Enforce's, not Author's.)*
 
 **5. Show the ODCS YAML — make "open" tangible**
 - **[DO]** View / Export ODCS → **View ODCS**. **[SEE]** the inline ODCS YAML.
