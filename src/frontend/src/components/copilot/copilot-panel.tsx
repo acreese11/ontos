@@ -268,8 +268,11 @@ export default function CopilotPanel() {
     };
     try {
       await streamContractDraft(
-        { catalog, schema, table },
+        { catalog, schema, table, sessionId: currentSessionId },
         {
+          // Adopt the copilot session the server recorded this draft turn into so
+          // subsequent turns continue it (mirrors chat's response.session_id).
+          onSession: (id) => setCurrentSessionId(id),
           onStage: (s) => patch((m) => ({ ...m, stages: upsertStage(m.stages ?? [], s as ContractDraftStage) })),
           onToken: (delta) => {
             draft += delta;
@@ -306,6 +309,13 @@ export default function CopilotPanel() {
       cancelFlush();
       setIsLoading(false);
       inputRef.current?.focus();
+      // Refresh the history dropdown so the recorded draft session shows up
+      // (the chat path does the same after sendMessage).
+      try {
+        setSessions(await fetchSessions());
+      } catch {
+        // non-fatal: history list just won't refresh
+      }
     }
   };
 
