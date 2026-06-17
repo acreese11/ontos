@@ -12,9 +12,11 @@ Updated 2026-06-17. Legend: ✅ done · ⏳ in progress · ⚠️ blocked · ❌
 
 ## 🥇 Current prioritization (per Alan, 2026-06-17)
 
-1. **Finalize the docs PRs — esp. the demo talk tracks.** ⏳ Update Enforce + Maintain talk
-   tracks for the DQX-native story (Author gets one light line only). Reorg/consolidate docs.
-2. **DQX execution as a notebook + troubleshoot the 100% `aws-dais` failure.** ❌ (the big build)
+1. **Finalize the docs PRs — esp. the demo talk tracks.** ✅ **DONE.** Enforce (#22) +
+   Maintain talk tracks carry the DQX-native story (0.15 + #1191 + "contract is the ruleset");
+   Author got one light line. Doc reorg (#52) + tracker consolidation done. Independent review
+   on record (2 blockers fixed). *Remaining non-talk-track docs PRs (#31/#45/#43) stay deferred.*
+2. **DQX execution as a notebook + troubleshoot the 100% `aws-dais` failure.** ⬅️ **NEXT** (the big build)
 3. **Ask-Ontos draft persistence.** ❌ (after #2)
 4. **Redeploy** FE + free apps. ❌ Last / as-needed for remote testing.
 
@@ -51,6 +53,11 @@ warehouse fix; the non-talk-track docs PRs (#31 / #45 / #43 — leave open, trac
 - **Notification bridge** — product Subscribe now writes `entity_subscriptions` so the
   quality/drift trust loop notifies UI subscribers; browser-verified (+ unit tests).
 - **Maintain demo** — four-beat rebalance (notify loop, drift, Lakehouse Monitoring, compliance).
+- **Talk tracks finalized (#22)** — Enforce carries DQX-native (0.15 + #1191 + "contract is the
+  ruleset" + Author→Enforce bridge); Maintain notes the subscribe→notify bridge is wired;
+  Author got one light line; Enforce Readiness flagged RE-VERIFY (100% aws-dais failure).
+- **Doc reorg (#52)** — fork/demo planning under `plans/dais/`, design/analysis under `docs/dais/`;
+  two trackers consolidated into this one (`plans/dais/backlog.md`).
 - **Earlier** — live-run bug fixes (#12); Compliance/Contract Coverage (#16/#18); deck pulled +
   parsed; demos 2/3 fleshed to ~5-min slots; dev tooling (`make dev` + `peer-review-pr` skill).
 - Design doc (`docs/dais/dqx-quality-rules-unification.md`) + analysis note
@@ -62,12 +69,13 @@ warehouse fix; the non-talk-track docs PRs (#31 / #45 / #43 — leave open, trac
 
 | PR | Branch | What | Disposition |
 |----|--------|------|-------------|
-| #22 | `docs/dais-demos-2-3-flesh` | Enforce/Discover demos + open-threads tracker | **Finalize**: rebase, drop the tracker (now here), add DQX-native to demo-2, merge |
+| ~~#52~~ | merged | doc reorg + tracker consolidation | ✅ **MERGED** 2026-06-17 |
+| ~~#22~~ | merged | talk tracks (Enforce/Discover flesh + DQX-native) | ✅ **MERGED** 2026-06-17 (reviewed) |
+| ~~#51~~ | closed | old quality-backlog tracker | ✅ **CLOSED** — superseded by this doc |
 | #50 | `feat/quality-test-check-sample` | validate-against-sample ("Test this check") [code] | ⚠️ blocked by test-check warehouse issue — *decision needed* |
-| #45 | `docs/dqx-slide-14-recommendations` | DQX slide #14 recs [docs] | Leave open; on merge, move file to `docs/dais/` |
-| #43 | `docs/metadata-drift-next-priority` | metadata/tag-drift roadmap [docs] | Leave open; recommend trim to a one-line note in demo-4 |
-| #31 | `docs/contract-review-workflow-analysis` | review-workflow analysis [docs] | Leave open; on merge, move file to `docs/dais/` |
-| #51 | `docs/dais-quality-backlog` | the old quality-backlog tracker | **Close** — superseded by this doc |
+| #45 | `docs/dqx-slide-14-recommendations` | DQX slide #14 recs [docs] | Leave open (deferred); on merge, move file to `docs/dais/` |
+| #43 | `docs/metadata-drift-next-priority` | metadata/tag-drift roadmap [docs] | Leave open (deferred); recommend trim to a one-line note in demo-4 |
+| #31 | `docs/contract-review-workflow-analysis` | review-workflow analysis [docs] | Leave open (deferred); on merge, move file to `docs/dais/` |
 | — | `agent-a75fe1fb5145ae8e8` (worktree, locked) | ask-ontos persistence WIP (+115/−8) | Finish + verify + PR (priority #3) |
 | — | `upstream/llm-search-obo-token` | upstream branch, behind 132 | Not ours — **delete candidate** (verify first) |
 | — | `upstream/quality-item-entity-existence` | upstream branch, behind 132 | Not ours — **delete candidate** (verify first) |
