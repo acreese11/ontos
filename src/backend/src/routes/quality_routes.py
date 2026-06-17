@@ -17,8 +17,17 @@ router = APIRouter(prefix="/api", tags=["Quality"])
 FEATURE_ID = "data-domains"
 
 
-def get_quality_manager() -> QualityManager:
-    return QualityManager()
+def get_quality_manager(request: Request) -> QualityManager:
+    """Build a QualityManager wired with the collaborators needed for the
+    quality-failure trust loop. Managers are singletons on app.state; if any
+    are missing (e.g. minimal test app) the manager still works for plain CRUD
+    and simply skips the notification fan-out."""
+    state = request.app.state
+    return QualityManager(
+        notifications_manager=getattr(state, "notifications_manager", None),
+        entity_subscriptions_manager=getattr(state, "entity_subscriptions_manager", None),
+        data_products_manager=getattr(state, "data_products_manager", None),
+    )
 
 
 # Entity types accepted on the quality-item ingestion path. Anything else fails
