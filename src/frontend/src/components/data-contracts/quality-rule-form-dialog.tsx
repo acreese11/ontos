@@ -7,6 +7,7 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrig
 import { Textarea } from '@/components/ui/textarea'
 import { Switch } from '@/components/ui/switch'
 import { Badge } from '@/components/ui/badge'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useToast } from '@/hooks/use-toast'
 import type { QualityRule } from '@/types/data-contract'
 import type { CheckGrain, DqxCheckArg, DqxCheckDef } from '@/types/dqx-catalog'
@@ -29,6 +30,9 @@ type QualityRuleFormProps = {
 const QUALITY_DIMENSIONS = ['accuracy', 'completeness', 'conformity', 'consistency', 'coverage', 'timeliness', 'uniqueness']
 const QUALITY_SEVERITIES = ['info', 'warning', 'error']
 const BUSINESS_IMPACTS = ['operational', 'regulatory']
+// Freeform ("Other engine") authoring — for non-DQX rules. DQX is the default path.
+const QUALITY_TYPES = ['text', 'library', 'sql', 'custom']
+const QUALITY_LEVELS = ['contract', 'object', 'property']
 
 // Ontos severity → DQX criticality (DQX only knows error | warn).
 function mapCriticality(severity: string): 'error' | 'warn' {
@@ -113,6 +117,15 @@ export default function QualityRuleFormDialog({
   const [severity, setSeverity] = useState('warning')
   const [businessImpact, setBusinessImpact] = useState('operational')
 
+  // DQX is the default/recommended path; "other" exposes the freeform fields for
+  // non-DQX engines (stored + round-tripped, not run by the built-in DQX runner).
+  const [mode, setMode] = useState<'dqx' | 'other'>('dqx')
+  const [engine, setEngine] = useState('')
+  const [ruleType, setRuleType] = useState('library')
+  const [ruleText, setRuleText] = useState('')
+  const [query, setQuery] = useState('')
+  const [level, setLevel] = useState('object')
+
   const checks = useMemo(() => checksForGrain(catalog, grain), [catalog, grain])
   const selected = useMemo(() => checks.find((c) => c.function === fn) || null, [checks, fn])
   const v1 = useMemo(() => checks.filter((c) => c.in_v1_subset), [checks])
@@ -140,11 +153,30 @@ export default function QualityRuleFormDialog({
     setDimension(initial?.dimension || 'completeness')
     setSeverity(initial?.severity || 'warning')
     setBusinessImpact(initial?.businessImpact || 'operational')
+    // Freeform fields (other-engine path).
+    setEngine(initial?.engine && initial.engine !== 'dqx' ? initial.engine : '')
+    setRuleType(initial?.type || 'library')
+    setRuleText(initial?.rule || '')
+    setQuery(initial?.query || '')
+    setLevel(initial?.level || (grain === 'column' ? 'property' : 'object'))
+
     const recovered = initial ? parseInitial(initial) : null
-    if (recovered) {
+    const isOtherEngine = !!(initial?.engine && initial.engine !== 'dqx')
+    // Legacy freeform = a non-DQX rule with no recoverable implementation. A DQX rule
+    // with an UNparseable implementation must NOT land here (would strip it on save) —
+    // it falls back to the DQX tab, which forces a re-pick (Add disabled until selected).
+    const isLegacyFreeform = !!(initial && !recovered && (initial.rule || initial.query) && initial.engine !== 'dqx')
+    if (isOtherEngine || isLegacyFreeform) {
+      // Editing an existing non-DQX / legacy freeform rule → open in "Other engine".
+      setMode('other')
+      setFn('')
+      setArgValues({})
+    } else if (recovered) {
+      setMode('dqx')
       setFn(recovered.fn)
       setArgValues(recovered.args)
     } else {
+      setMode('dqx')
       setFn('')
       setArgValues({})
     }
@@ -188,6 +220,43 @@ export default function QualityRuleFormDialog({
       toast({ title: 'Validation Error', description: 'Rule name is required', variant: 'destructive' })
       return
     }
+
+    // Other-engine (freeform) path: emit a non-DQX rule that round-trips but isn't
+    // run by the built-in DQX runner.
+    if (mode === 'other') {
+      const missingExpr = ruleType === 'sql' ? (!ruleText.trim() && !query.trim()) : !ruleText.trim()
+      if (missingExpr) {
+        toast({
+          title: 'Validation Error',
+          description: ruleType === 'sql' ? 'Provide a SQL query or rule expression' : 'Rule expression is required',
+          variant: 'destructive',
+        })
+        return
+      }
+      setIsSubmitting(true)
+      try {
+        const qualityRule: QualityRule = {
+          name: name.trim(),
+          description: description.trim() || undefined,
+          level,
+          dimension,
+          businessImpact,
+          severity,
+          type: ruleType,
+          engine: engine.trim() || undefined,
+          rule: ruleText.trim() || undefined,
+          query: query.trim() || undefined,
+        }
+        await onSubmit(qualityRule)
+        onOpenChange(false)
+      } catch (err: any) {
+        toast({ title: 'Error', description: err?.message || 'Failed to save quality rule', variant: 'destructive' })
+      } finally {
+        setIsSubmitting(false)
+      }
+      return
+    }
+
     if (!selected) {
       toast({ title: 'Validation Error', description: 'Pick a check', variant: 'destructive' })
       return
@@ -298,17 +367,24 @@ export default function QualityRuleFormDialog({
         <DialogHeader>
           <DialogTitle>{initial ? 'Edit Quality Check' : 'Add Quality Check'}</DialogTitle>
           <DialogDescription>
-            Pick a DQX check{column ? <> for <code className="text-foreground">{column}</code></> : <> for this {grain}</>}.
-            What you author here is exactly what DQX runs.
+            Author a quality check{column ? <> for <code className="text-foreground">{column}</code></> : <> for this {grain}</>}.
+            DQX is the default — what you author there is exactly what DQX runs.
           </DialogDescription>
         </DialogHeader>
 
-        {loading && <p className="text-sm text-muted-foreground py-4">Loading check catalog…</p>}
-        {error && <p className="text-sm text-destructive py-4">Couldn't load the check catalog: {error}</p>}
+        <Tabs value={mode} onValueChange={(v) => setMode(v as 'dqx' | 'other')}>
+          <TabsList className="grid grid-cols-2 w-full">
+            <TabsTrigger value="dqx">DQX (recommended)</TabsTrigger>
+            <TabsTrigger value="other">Other engine</TabsTrigger>
+          </TabsList>
 
-        {catalog && (
-          <div className="space-y-4 py-2">
-            {/* Check picker */}
+          <TabsContent value="dqx">
+            {loading && <p className="text-sm text-muted-foreground py-4">Loading check catalog…</p>}
+            {error && <p className="text-sm text-destructive py-4">Couldn't load the check catalog: {error}</p>}
+
+            {catalog && (
+              <div className="space-y-4 py-2">
+                {/* Check picker */}
             <div className="space-y-2">
               <Label htmlFor="check">Check</Label>
               <Select value={fn} onValueChange={onPickCheck}>
@@ -403,12 +479,88 @@ export default function QualityRuleFormDialog({
                 </pre>
               </div>
             )}
-          </div>
-        )}
+              </div>
+            )}
+          </TabsContent>
+
+          <TabsContent value="other">
+            <div className="space-y-4 py-2">
+              <p className="text-xs text-muted-foreground">
+                For a non-DQX engine (soda, Great Expectations, dbt, …). The rule is stored and
+                round-trips through the contract, but the built-in DQX runner doesn't execute it.
+              </p>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <Label htmlFor="of-name">Name <span className="text-destructive">*</span></Label>
+                  <Input id="of-name" value={name} onChange={(e) => setName(e.target.value)} className="h-9" />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="of-engine">Engine</Label>
+                  <Input id="of-engine" value={engine} onChange={(e) => setEngine(e.target.value)} placeholder="e.g. soda, great-expectations, dbt" className="h-9" />
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-3">
+                <div className="space-y-1">
+                  <Label htmlFor="of-type">Type</Label>
+                  <Select value={ruleType} onValueChange={setRuleType}>
+                    <SelectTrigger id="of-type"><SelectValue /></SelectTrigger>
+                    <SelectContent>{QUALITY_TYPES.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="of-level">Level</Label>
+                  <Select value={level} onValueChange={setLevel}>
+                    <SelectTrigger id="of-level"><SelectValue /></SelectTrigger>
+                    <SelectContent>{QUALITY_LEVELS.map((l) => <SelectItem key={l} value={l}>{l}</SelectItem>)}</SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="of-severity">Severity</Label>
+                  <Select value={severity} onValueChange={setSeverity}>
+                    <SelectTrigger id="of-severity"><SelectValue /></SelectTrigger>
+                    <SelectContent>{QUALITY_SEVERITIES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <Label htmlFor="of-dimension">Dimension</Label>
+                  <Select value={dimension} onValueChange={setDimension}>
+                    <SelectTrigger id="of-dimension"><SelectValue /></SelectTrigger>
+                    <SelectContent>{QUALITY_DIMENSIONS.map((d) => <SelectItem key={d} value={d}>{d}</SelectItem>)}</SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="of-bi">Business impact</Label>
+                  <Select value={businessImpact} onValueChange={setBusinessImpact}>
+                    <SelectTrigger id="of-bi"><SelectValue /></SelectTrigger>
+                    <SelectContent>{BUSINESS_IMPACTS.map((b) => <SelectItem key={b} value={b}>{b}</SelectItem>)}</SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="of-rule">Rule expression</Label>
+                <Textarea id="of-rule" value={ruleText} onChange={(e) => setRuleText(e.target.value)} rows={2}
+                  placeholder="engine-specific rule, e.g. col_name is not null" />
+              </div>
+              {ruleType === 'sql' && (
+                <div className="space-y-1">
+                  <Label htmlFor="of-query">SQL query</Label>
+                  <Textarea id="of-query" value={query} onChange={(e) => setQuery(e.target.value)} rows={3}
+                    className="font-mono text-sm" placeholder="SELECT COUNT(*) FROM … WHERE …" />
+                </div>
+              )}
+              <div className="space-y-1">
+                <Label htmlFor="of-desc">Description</Label>
+                <Textarea id="of-desc" value={description} onChange={(e) => setDescription(e.target.value)} rows={2} />
+              </div>
+            </div>
+          </TabsContent>
+        </Tabs>
 
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isSubmitting}>Cancel</Button>
-          <Button onClick={handleSubmit} disabled={isSubmitting || !selected}>
+          <Button onClick={handleSubmit} disabled={isSubmitting || (mode === 'dqx' && !selected)}>
             {isSubmitting ? 'Saving…' : initial ? 'Save Changes' : 'Add Check'}
           </Button>
         </DialogFooter>
