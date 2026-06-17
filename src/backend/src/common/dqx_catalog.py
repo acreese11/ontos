@@ -260,3 +260,40 @@ def to_display(check: Dict[str, Any], *, column: Optional[str] = None) -> str:
     # generic fallback: function + its column/args
     label = next((c.label for c in CHECK_CATALOG if c.function == fn), fn)
     return f"{label}{(' on ' + col) if col else ''}"
+
+
+# ── serialization (for the authoring UI's check picker, via the API) ─────────────
+def _serialize_arg(a: CheckArg) -> Dict[str, Any]:
+    d: Dict[str, Any] = {"name": a.name, "type": a.type, "required": a.required}
+    if a.help:
+        d["help"] = a.help
+    if a.example is not None:
+        d["example"] = a.example
+    if a.default is not None:
+        d["default"] = a.default
+    return d
+
+
+def _serialize_check(c: CheckDef) -> Dict[str, Any]:
+    return {
+        "function": c.function,
+        "label": c.label,
+        "description": c.description,
+        "grain": c.grain,
+        "in_v1_subset": c.in_v1_subset,
+        "example": c.example,
+        "column_arg": c.column_arg,
+        "args": [_serialize_arg(a) for a in c.args],
+    }
+
+
+def serialize_catalog() -> Dict[str, Any]:
+    """JSON-serializable catalog for the authoring UI's check picker.
+
+    ``checks`` are the explicit (non-constraint) DQX checks the picker offers;
+    ``constraint_derived_functions`` lets the UI recognise + redirect anything that
+    belongs on the property's Constraints tab instead."""
+    return {
+        "checks": [_serialize_check(c) for c in CHECK_CATALOG],
+        "constraint_derived_functions": sorted(CONSTRAINT_DERIVED_FUNCTIONS),
+    }

@@ -38,6 +38,19 @@ _QUALITY_ENTITY_LOOKUP = {
 }
 
 
+@router.get("/quality/dqx-check-catalog")
+async def get_dqx_check_catalog(
+    _: bool = Depends(PermissionChecker("data-contracts", FeatureAccessLevel.READ_ONLY)),
+):
+    """The DQX check catalog for the quality-rule authoring picker.
+
+    Static (no DB): the explicit, non-constraint DQX checks the UI offers (function +
+    typed-argument schema + UI metadata), plus the constraint-derived functions the UI
+    should redirect to the property's Constraints tab. See ``common/dqx_catalog``."""
+    from src.common.dqx_catalog import serialize_catalog
+    return serialize_catalog()
+
+
 def _verify_entity_exists(db, *, entity_type: str, entity_id: str) -> None:
     """404 if (entity_type, entity_id) doesn't resolve to a real row.
 

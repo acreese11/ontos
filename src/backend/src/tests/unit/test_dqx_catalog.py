@@ -15,6 +15,7 @@ from src.common.dqx_catalog import (
     sql_expression_implementation,
     to_display,
     catalog,
+    serialize_catalog,
     CHECK_CATALOG,
     CONSTRAINT_DERIVED_FUNCTIONS,
 )
@@ -150,3 +151,24 @@ class TestDisplay:
     def test_unique(self):
         out = to_display({"function": "is_unique", "arguments": {"columns": ["a", "b"]}})
         assert out == "unique(a, b)"
+
+
+class TestSerialize:
+    def test_shape_is_json_safe_and_complete(self):
+        import json
+        data = serialize_catalog()
+        json.dumps(data)  # must be JSON-serializable (no dataclasses/sets leak through)
+        assert set(data.keys()) == {"checks", "constraint_derived_functions"}
+        assert len(data["checks"]) == len(CHECK_CATALOG)
+        # constraint_derived is a sorted list (JSON has no sets)
+        assert data["constraint_derived_functions"] == sorted(CONSTRAINT_DERIVED_FUNCTIONS)
+
+    def test_each_check_carries_picker_metadata(self):
+        for c in serialize_catalog()["checks"]:
+            assert {"function", "label", "description", "grain", "args"} <= set(c)
+            for a in c["args"]:
+                assert {"name", "type", "required"} <= set(a)
+
+    def test_no_constraint_derived_in_serialized_checks(self):
+        fns = {c["function"] for c in serialize_catalog()["checks"]}
+        assert fns.isdisjoint(set(serialize_catalog()["constraint_derived_functions"]))
