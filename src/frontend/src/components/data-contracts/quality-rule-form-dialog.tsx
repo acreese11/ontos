@@ -162,7 +162,10 @@ export default function QualityRuleFormDialog({
 
     const recovered = initial ? parseInitial(initial) : null
     const isOtherEngine = !!(initial?.engine && initial.engine !== 'dqx')
-    const isLegacyFreeform = !!(initial && !recovered && (initial.rule || initial.query))
+    // Legacy freeform = a non-DQX rule with no recoverable implementation. A DQX rule
+    // with an UNparseable implementation must NOT land here (would strip it on save) —
+    // it falls back to the DQX tab, which forces a re-pick (Add disabled until selected).
+    const isLegacyFreeform = !!(initial && !recovered && (initial.rule || initial.query) && initial.engine !== 'dqx')
     if (isOtherEngine || isLegacyFreeform) {
       // Editing an existing non-DQX / legacy freeform rule → open in "Other engine".
       setMode('other')
@@ -221,8 +224,13 @@ export default function QualityRuleFormDialog({
     // Other-engine (freeform) path: emit a non-DQX rule that round-trips but isn't
     // run by the built-in DQX runner.
     if (mode === 'other') {
-      if (!ruleText.trim() && !query.trim()) {
-        toast({ title: 'Validation Error', description: 'Provide a rule expression or a SQL query', variant: 'destructive' })
+      const missingExpr = ruleType === 'sql' ? (!ruleText.trim() && !query.trim()) : !ruleText.trim()
+      if (missingExpr) {
+        toast({
+          title: 'Validation Error',
+          description: ruleType === 'sql' ? 'Provide a SQL query or rule expression' : 'Rule expression is required',
+          variant: 'destructive',
+        })
         return
       }
       setIsSubmitting(true)
