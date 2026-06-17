@@ -103,6 +103,21 @@ def _passing_item(contract_id):
     )
 
 
+def _score_only_failing_item(contract_id):
+    """A count-less DQX run: no checks_passed/total, just a sub-100 score.
+    Exercises the score-fallback branch of _is_failure + the 'scored N%' summary."""
+    return QualityItemCreate(
+        entity_id=contract_id,
+        entity_type="data_contract",
+        title="not_null_check",
+        dimension="completeness",
+        source="dqx",
+        score_percent=75.0,
+        checks_passed=None,
+        checks_total=None,
+    )
+
+
 def _notifications_for(db, recipient):
     return db.query(NotificationDb).filter(NotificationDb.recipient == recipient).all()
 
@@ -151,6 +166,17 @@ class TestFailureTriggersNotifications:
         mgr.create(db_session, data=_failing_item(contract.id), user_email="dqx@pipeline")
         assert len(_notifications_for(db_session, OWNER_EMAIL)) == 1
 
+    def test_score_only_failure_notifies_with_score_summary(self, db_session):
+        """A count-less run (score < 100, no check counts) still notifies, and the
+        subtitle uses the 'scored N%' wording — the _is_failure score fallback."""
+        contract = _seed_contract_with_owner(db_session, name="score_only_contract")
+        db_session.flush()
+        mgr = _make_manager(db_session)
+        mgr.create(db_session, data=_score_only_failing_item(contract.id), user_email="dqx@pipeline")
+        notes = _notifications_for(db_session, OWNER_EMAIL)
+        assert len(notes) == 1
+        assert "scored 75%" in (notes[0].subtitle or "")
+
 
 # =========================================================================
 # 2. No failure → no notification
@@ -196,6 +222,22 @@ class TestPassingDoesNotNotify:
 # =========================================================================
 # 3. Recipient resolution
 # =========================================================================
+
+class TestNotificationFailureIsSwallowed:
+    def test_notify_error_does_not_break_create(self, db_session):
+        """If the fan-out raises, create() still succeeds (the quality row was
+        already committed) and no exception propagates to the ingestion caller."""
+        contract = _seed_contract_with_owner(db_session, name="resilient_contract")
+        db_session.flush()
+        mgr = _make_manager(db_session)
+        mgr.notify_quality_failure = MagicMock(side_effect=RuntimeError("notify boom"))
+        # Must not raise — ingestion is protected from notification errors.
+        result = mgr.create(db_session, data=_failing_item(contract.id), user_email="dqx@pipeline")
+        assert result is not None
+        mgr.notify_quality_failure.assert_called_once()
+        # The fan-out blew up before creating anything.
+        assert db_session.query(NotificationDb).count() == 0
+
 
 class TestRecipientResolution:
     def test_resolve_returns_owner_first_then_subscribers_deduped(self, db_session):

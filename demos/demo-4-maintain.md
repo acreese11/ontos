@@ -319,18 +319,24 @@ loop). Either path ends in the same notification fan-out.
     ```
 
 **Verify (both paths)**
-4. **Owner inbox:** log in as / impersonate `operations-analytics-lead@safe-skies.demo`
-   → Notifications → a new **warning** "Quality failure: global_flight_ops",
-   subtitle "1 rule(s) failed (not_null_check)".
-5. **Subscriber inbox:** as `consumer@safe-skies.demo` → same notification appears.
-6. **Deep link:** click it → lands on `/data-contracts/{contract_id}`.
+4. **Owner notification** created for `operations-analytics-lead@safe-skies.demo`: a
+   **warning** "Quality failure: global_flight_ops", subtitle
+   "1 rule(s) failed (not_null_check)".
+5. **Subscriber notification** created for `consumer@safe-skies.demo` (the consumer who
+   subscribed in Discover): same notification.
+6. **Deep link:** points to `/data-contracts/{contract_id}`.
 7. **Negative check (optional):** POST the same item with `checks_passed: 5,
-   checks_total: 5, score_percent: 100` → **no** new notification (passing run is a
-   no-op).
+   checks_total: 5, score_percent: 100` → **no** new notification (passing run is a no-op).
 
-> Notifications are filtered per-recipient by email match (see
-> `NotificationsManager.get_notifications`), so each inbox shows only its own.
-> To watch both live, use two browser sessions / two impersonated users.
+> **Local-auth caveat — read before recording.** Local dev runs as a **single** user
+> (`MOCK_USER_EMAIL`); there is **no in-UI user switching**, so you cannot *visually* show two
+> separate inboxes locally. `NotificationsManager.get_notifications` filters per recipient, so
+> the in-app inbox only ever shows the current user's.
+> - **To verify the loop locally:** check the `notifications` table directly for rows with
+>   `recipient` = both emails (one per recipient) — that confirms the fan-out fired.
+> - **For the two-inbox *visual*** (the demo's payoff — "the owner AND the subscriber both hear
+>   it"): record on a **deployed app** where you can sign in as each identity, owner session
+>   beside subscriber session.
 
 ## Walkthrough (live or pre-recorded)
 
