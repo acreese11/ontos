@@ -4665,6 +4665,142 @@ async def update_team_metadata(
     return result
 
 
+# ============================================================================
+# Source Conformance (schema/metadata drift) validation
+# ============================================================================
+
+class ValidationResultRead(BaseModel):
+    """A single contract validation finding (one drift / one passing object)."""
+    id: str
+    check_type: str
+    passed: bool
+    message: Optional[str] = None
+    details: Optional[dict] = None
+    created_at: Optional[datetime] = None
+
+
+class ValidationRunRead(BaseModel):
+    """A contract validation run plus its per-finding results."""
+    id: str
+    contract_id: str
+    status: str
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+    checks_passed: int = 0
+    checks_failed: int = 0
+    score: float = 0.0
+    error_message: Optional[str] = None
+    results: List[ValidationResultRead] = Field(default_factory=list)
+
+
+def _validation_run_to_read(run) -> ValidationRunRead:
+    """Map a DataContractValidationRunDb (+results) to the API model."""
+    results: List[ValidationResultRead] = []
+    for r in (run.results or []):
+        details = None
+        if r.details_json:
+            try:
+                details = json.loads(r.details_json)
+            except (json.JSONDecodeError, TypeError):
+                details = None
+        results.append(ValidationResultRead(
+            id=r.id,
+            check_type=r.check_type,
+            passed=r.passed,
+            message=r.message,
+            details=details,
+            created_at=r.created_at,
+        ))
+    return ValidationRunRead(
+        id=run.id,
+        contract_id=run.contract_id,
+        status=run.status,
+        started_at=run.started_at,
+        finished_at=run.finished_at,
+        checks_passed=run.checks_passed,
+        checks_failed=run.checks_failed,
+        score=run.score,
+        error_message=run.error_message,
+        results=results,
+    )
+
+
+def _build_contract_validation_manager(request: Request):
+    """Build a ContractValidationManager wired with the trust-loop collaborators.
+
+    QualityManager is reused only for recipient resolution (owner + product
+    subscribers); NotificationsManager delivers the drift notification. All
+    pulled from app.state singletons."""
+    from src.controller.contract_validation_manager import ContractValidationManager
+    from src.controller.quality_manager import QualityManager
+    state = request.app.state
+    quality_manager = QualityManager(
+        notifications_manager=getattr(state, "notifications_manager", None),
+        entity_subscriptions_manager=getattr(state, "entity_subscriptions_manager", None),
+        data_products_manager=getattr(state, "data_products_manager", None),
+    )
+    return ContractValidationManager(
+        quality_manager=quality_manager,
+        notifications_manager=getattr(state, "notifications_manager", None),
+    )
+
+
+@router.post('/data-contracts/{contract_id}/validate-source', response_model=ValidationRunRead)
+async def validate_contract_source(
+    contract_id: str,
+    request: Request,
+    db: DBSessionDep,
+    current_user: CurrentUserDep = None,
+    _: bool = Depends(PermissionChecker('data-contracts', FeatureAccessLevel.READ_WRITE)),
+):
+    """Validate a contract's declared schema against its live Unity Catalog tables.
+
+    Runs the inline schema-drift diff (missing/extra columns, type & nullability
+    changes), persists a run + per-finding results, and on any drift notifies the
+    contract owner + product subscribers. Uses the caller's OBO token for the
+    live UC read."""
+    from src.common.workspace_client import get_obo_workspace_client
+    try:
+        ws_client = get_obo_workspace_client(request)
+    except Exception as e:
+        logger.warning("Could not build OBO workspace client for source validation: %s", e)
+        ws_client = None
+
+    manager = _build_contract_validation_manager(request)
+    try:
+        run = manager.run_source_validation(
+            db,
+            contract_id=contract_id,
+            current_user=getattr(current_user, 'email', None) if current_user else None,
+            workspace_client=ws_client,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.exception("Source validation failed for contract %s", contract_id)
+        raise HTTPException(status_code=500, detail=f"Source validation failed: {e}")
+    return _validation_run_to_read(run)
+
+
+@router.get('/data-contracts/{contract_id}/validation-runs', response_model=Optional[ValidationRunRead])
+async def get_contract_validation_runs(
+    contract_id: str,
+    request: Request,
+    db: DBSessionDep,
+    _: bool = Depends(PermissionChecker('data-contracts', FeatureAccessLevel.READ_ONLY)),
+):
+    """Latest source-conformance validation run (with results) for a contract.
+
+    Returns null when the contract has never been validated."""
+    # Read-only DB lookup — no trust-loop collaborators needed.
+    from src.controller.contract_validation_manager import ContractValidationManager
+    manager = ContractValidationManager()
+    run = manager.get_latest_run(db, contract_id=contract_id)
+    if run is None:
+        return None
+    return _validation_run_to_read(run)
+
+
 def register_routes(app):
     """Register routes with the app"""
     app.include_router(router)

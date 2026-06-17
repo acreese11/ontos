@@ -17,6 +17,7 @@ import { ColumnDef } from '@tanstack/react-table'
 import { useToast } from '@/hooks/use-toast'
 import EntityMetadataPanel from '@/components/metadata/entity-metadata-panel'
 import EntityQualityPanel from '@/components/quality/entity-quality-panel'
+import SourceConformancePanel from '@/components/data-contracts/source-conformance-panel'
 import { OwnershipPanel } from '@/components/common/ownership-panel'
 import { EntityTreePanel } from '@/components/common/entity-tree-panel'
 import { CommentSidebar } from '@/components/comments'
@@ -3263,6 +3264,11 @@ export default function DataContractDetails() {
       {/* Quality Panel */}
       {contract.id && (
         <EntityQualityPanel entityId={contract.id} entityType="data_contract" />
+      )}
+
+      {/* Source Conformance (schema/metadata drift vs live UC) */}
+      {contract.id && (
+        <SourceConformancePanel contractId={contract.id} />
       )}
 
       {/* Dialogs */}
