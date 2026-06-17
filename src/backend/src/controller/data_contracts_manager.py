@@ -1915,7 +1915,9 @@ class DataContractsManager(DeliveryMixin, SearchableAsset):
                 object_id=object_id,
                 property_id=property_id,
                 stable_id=rule_dict.get('id'),
-                level=rule_dict.get('level', 'property' if property_id else 'object'),
+                # A property-bound rule is always property-level, regardless of what the
+                # payload's `level` says (keeps level + property_id consistent).
+                level=('property' if property_id else rule_dict.get('level', 'object')),
                 name=rule_dict.get('name'),
                 description=rule_dict.get('description'),
                 dimension=rule_dict.get('dimension'),
@@ -1939,6 +1941,8 @@ class DataContractsManager(DeliveryMixin, SearchableAsset):
                 must_be_le=rule_dict.get('mustBeLe') or rule_dict.get('must_be_le'),
                 must_be_between_min=rule_dict.get('mustBeBetweenMin') or rule_dict.get('must_be_between_min'),
                 must_be_between_max=rule_dict.get('mustBeBetweenMax') or rule_dict.get('must_be_between_max'),
+                must_not_between_min=rule_dict.get('mustNotBetweenMin') or rule_dict.get('must_not_between_min'),
+                must_not_between_max=rule_dict.get('mustNotBetweenMax') or rule_dict.get('must_not_between_max'),
             )
 
         # Object-level (schema) quality rules.
