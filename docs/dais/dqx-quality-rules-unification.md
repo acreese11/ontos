@@ -1,7 +1,7 @@
 # Design & Plan: Unify Quality-Rule Authoring on DQX-Native ODCS
 
 **Status:** design draft (for review). No implementation yet.
-**Companion analysis:** `docs/notes/quality-rules-ux-analysis.md` (the diagnosis this builds on).
+**Companion analysis:** `docs/dais/quality-rules-ux-analysis.md` (the diagnosis this builds on).
 **DQX version:** **0.15.0** (latest, published 2026-06-13). Design targets 0.15.0.
 > The local pip mirror (Databricks proxy) lags at 0.14.0 and PyPI is firewalled in dev, so
 > 0.15.0 was verified via the GitHub release API. The investigation below was done against the

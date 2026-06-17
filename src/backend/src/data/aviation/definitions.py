@@ -1,7 +1,7 @@
 """Domain · Team · Data Product · ODCS Contract definitions for the Safe Skies demo.
 
-Authoritative source-of-truth: `plans/dais-domain-model.md`.
-Field schemas + quality rules: `plans/dais-aviation-data-research.md`.
+Authoritative source-of-truth: `plans/dais/domain-model.md`.
+Field schemas + quality rules: `plans/dais/aviation-data-research.md`.
 
 Everything here is just data (dicts/lists). The seeder (`seed.py`) consumes these
 and calls Ontos manager methods to materialize them.
@@ -971,7 +971,7 @@ def _odps_product(*, name: str, domain: str, owner_team: str, description: str, 
         "name": name,
         "description": {
             "purpose": description,
-            "usage": "Internal Safe Skies data product — see plans/dais-domain-model.md",
+            "usage": "Internal Safe Skies data product — see plans/dais/domain-model.md",
             "limitations": "Synthetic data for DAIS 2026 demo.",
         },
         "domain": domain,

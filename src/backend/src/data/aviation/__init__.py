@@ -1,8 +1,8 @@
 """Safe Skies — synthetic aviation data generators for the DAIS 2026 demo.
 
 Modeled against OAG, Cirium, OpenSky, and ICAO/FAA field shapes. See
-`plans/dais-aviation-data-research.md` for the field-level source-of-truth and
-`plans/dais-domain-model.md` for the domain/product/contract structure.
+`plans/dais/aviation-data-research.md` for the field-level source-of-truth and
+`plans/dais/domain-model.md` for the domain/product/contract structure.
 
 Public entry points:
     SERVICE_DATE — the target service date all generators are anchored to

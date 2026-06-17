@@ -12,7 +12,7 @@ DQX's ``_is_dqx_explicit_rule`` only runs a rule when it is ``type=custom`` +
 ``engine=dqx`` + an ``implementation`` dict containing a ``check`` — so this module
 is what makes a UI- or generator-authored rule *actually execute*.
 
-Two design rules (see ``docs/design/dqx-quality-rules-unification.md``):
+Two design rules (see ``docs/dais/dqx-quality-rules-unification.md``):
 
   1. **Constraint-equivalent checks are NOT offered here.** Anything DQX derives
      automatically from ODCS property constraints (not-null/unique/pattern/range/
