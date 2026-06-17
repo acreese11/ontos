@@ -2000,7 +2000,14 @@ class DataContractsManager(DeliveryMixin, SearchableAsset):
                 rule_dict = rule_data.model_dump()
             else:
                 rule_dict = rule_data
-            
+
+            # `implementation` is a Text column; ODCS shape is a dict (DQX check). Encode
+            # dicts to JSON for storage (strings pass through) — mirrors _quality_check_db
+            # so both persist paths round-trip identically via the read path's json.loads.
+            impl = rule_dict.get('implementation')
+            if isinstance(impl, dict):
+                impl = json.dumps(impl)
+
             quality_check = DataQualityCheckDb(
                 object_id=schema_obj.id,
                 stable_id=rule_dict.get('id'),
@@ -2019,7 +2026,7 @@ class DataContractsManager(DeliveryMixin, SearchableAsset):
                 rule=rule_dict.get('rule'),
                 query=rule_dict.get('query'),
                 engine=rule_dict.get('engine'),
-                implementation=rule_dict.get('implementation'),
+                implementation=impl,
                 must_be=rule_dict.get('mustBe') or rule_dict.get('must_be'),
                 must_not_be=rule_dict.get('mustNotBe') or rule_dict.get('must_not_be'),
                 must_be_gt=rule_dict.get('mustBeGt') or rule_dict.get('must_be_gt'),
