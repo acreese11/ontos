@@ -61,10 +61,9 @@ function buildArguments(check: DqxCheckDef, values: Record<string, unknown>): Re
   const out: Record<string, unknown> = {}
   for (const arg of check.args) {
     const coerced = coerceArg(arg, values[arg.name])
-    if (isEmptyValue(coerced)) {
-      if (arg.required) continue // surfaced by validation
-      continue // omit empty optionals (e.g. no `msg: null` noise)
-    }
+    // Omit empty values: empty optionals shouldn't emit noise (e.g. no `msg: null`),
+    // and missing required args are surfaced by validation in handleSubmit.
+    if (isEmptyValue(coerced)) continue
     out[arg.name] = coerced
   }
   return out
@@ -272,7 +271,7 @@ export default function QualityRuleFormDialog({
     } else if (arg.type === 'number' || arg.type === 'integer') {
       input = (
         <Input id={`arg-${arg.name}`} type="number" value={(value as any) ?? ''}
-          onChange={(e) => setArg(arg.name, e.target.value)} placeholder={placeholder} className="h-9" />
+          onChange={(e) => setArg(arg.name, e.target.value === '' ? '' : Number(e.target.value))} placeholder={placeholder} className="h-9" />
       )
     } else {
       // string | string[] | columns | column(no list) → text. Lists are comma-separated.
