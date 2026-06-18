@@ -168,15 +168,19 @@ class TestDriftFindings:
         assert run.checks_failed == 3
         assert run.status == "succeeded"
 
-    def test_nullability_change_detected(self, db_session):
+    def test_nullability_not_flagged_as_drift(self, db_session):
+        # ODCS `required` is a DQX-enforced quality assertion, NOT physical nullability.
+        # UC tables are nullable by default, so "contract required → table nullable" must
+        # NOT be reported as schema drift (it was a false positive on every required column —
+        # ~100% drift on healthy contracts). With only that difference, the run reports NO drift.
         contract = _seed_contract(db_session, columns=[("icao24", "string", True)])
         db_session.flush()
-        # Live: icao24 became nullable (required True -> False).
-        live = {"icao24": _live("icao24", "string", False)}
+        live = {"icao24": _live("icao24", "string", False)}  # table nullable, type matches
         mgr = _make_manager(db_session, live_columns=live)
         run = mgr.run_source_validation(db_session, contract_id=contract.id)
         kinds = {json.loads(r.details_json)["kind"] for r in run.results if not r.passed}
-        assert "nullability_change" in kinds
+        assert "nullability_change" not in kinds
+        assert not [r for r in run.results if not r.passed]  # no drift at all
 
 
 # =========================================================================
