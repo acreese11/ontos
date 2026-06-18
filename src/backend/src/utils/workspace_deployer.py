@@ -125,24 +125,38 @@ class WorkspaceDeployer:
             with open(local_path, 'rb') as f:
                 content = f.read()
 
-            # Encode content as base64
+            # A .py file whose first line is the notebook magic header must be
+            # imported with format=SOURCE so the workspace creates a NOTEBOOK that a
+            # notebook_task can run. ImportFormat.AUTO imports it as a plain FILE
+            # (verified), which a notebook_task can't execute. A notebook lands at
+            # the path WITHOUT the source extension, so strip it. Plain .py modules
+            # (no header, used by spark_python_task) and non-.py files stay AUTO.
+            is_notebook_source = False
+            if local_path.suffix == '.py':
+                first_line = content.split(b'\n', 1)[0].strip()
+                if first_line == b'# Databricks notebook source':
+                    is_notebook_source = True
+
             encoded_content = base64.b64encode(content).decode('utf-8')
 
-            # Determine format based on file extension
-            if local_path.suffix in ['.py', '.yaml', '.yml', '.txt', '.json', '.md']:
-                format_type = workspace.ImportFormat.AUTO
+            if is_notebook_source:
+                notebook_path = workspace_path[:-3]  # drop ".py" → notebook path
+                self._client.workspace.import_(
+                    path=notebook_path,
+                    content=encoded_content,
+                    format=workspace.ImportFormat.SOURCE,
+                    language=workspace.Language.PYTHON,
+                    overwrite=True,
+                )
+                logger.debug(f"Imported notebook: {local_path.name} -> {notebook_path}")
             else:
-                format_type = workspace.ImportFormat.AUTO
-
-            # Upload using workspace import API
-            self._client.workspace.import_(
-                path=workspace_path,
-                content=encoded_content,
-                format=format_type,
-                overwrite=True
-            )
-
-            logger.debug(f"Uploaded file: {local_path.name} -> {workspace_path}")
+                self._client.workspace.import_(
+                    path=workspace_path,
+                    content=encoded_content,
+                    format=workspace.ImportFormat.AUTO,
+                    overwrite=True,
+                )
+                logger.debug(f"Uploaded file: {local_path.name} -> {workspace_path}")
 
         except Exception as e:
             logger.error(f"Failed to upload file {local_path}: {e}")
