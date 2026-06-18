@@ -34,6 +34,7 @@ export async function sendMessage(content: string, sessionId?: string, debug?: b
 }
 
 export interface ContractStreamCallbacks {
+  onSession?: (sessionId: string) => void;
   onStage?: (stage: { step: string; status: 'start' | 'done'; [k: string]: unknown }) => void;
   onToken?: (delta: string) => void;
   onResult?: (r: {
@@ -54,7 +55,7 @@ export interface ContractStreamCallbacks {
  * a body). Resolves when the stream closes.
  */
 export async function streamContractDraft(
-  params: { catalog: string; schema: string; table: string; sampleSize?: number; force?: boolean },
+  params: { catalog: string; schema: string; table: string; sampleSize?: number; force?: boolean; sessionId?: string },
   cb: ContractStreamCallbacks,
   signal?: AbortSignal,
 ): Promise<void> {
@@ -67,6 +68,10 @@ export async function streamContractDraft(
       table: params.table,
       sample_size: params.sampleSize ?? 20,
       force: params.force ?? false,
+      // Always send the field (empty string on the first turn) so the server
+      // records the turn into llm_sessions: "" → create a session; a string
+      // continues it. Omitting it entirely opts out of session recording.
+      session_id: params.sessionId ?? '',
     }),
     signal,
   });
@@ -94,6 +99,7 @@ export async function streamContractDraft(
       return;
     }
     switch (eventType) {
+      case 'session': if (payload.session_id) cb.onSession?.(payload.session_id); break;
       case 'stage': cb.onStage?.(payload); break;
       case 'token': cb.onToken?.(payload.delta ?? ''); break;
       case 'result': cb.onResult?.(payload); break;
