@@ -2843,7 +2843,39 @@ class DataContractsManager(DeliveryMixin, SearchableAsset):
             raise ValueError(f"Contract {contract_id} not found")
         
         contract_name = db_obj.name
-        
+
+        # Clean up child rows in EXTERNAL tables that FK data_contracts WITHOUT a DB cascade
+        # or an ORM relationship — otherwise remove() raises a ForeignKeyViolation. (The
+        # children declared in data_contracts.py already cascade via ondelete=CASCADE +
+        # relationship("...", cascade="all, delete-orphan").) These two run tables FK the
+        # contract directly with no cascade; their *results* cascade via the run→results
+        # relationship, but bulk deletes bypass ORM cascade, so delete results then runs.
+        #   - data_contract_validation_runs — source-conformance / drift runs
+        #   - data_quality_check_runs       — DQX quality-check runs
+        # (MDM master/source-contract refs are intentionally NOT cascaded: a contract still
+        # used by an MDM config should block deletion rather than silently orphan it.)
+        from src.db_models.data_contract_validations import (
+            DataContractValidationRunDb, DataContractValidationResultDb,
+        )
+        from src.db_models.data_quality_checks import (
+            DataQualityCheckRunDb, DataQualityCheckResultDb,
+        )
+        for run_model, result_model in (
+            (DataContractValidationRunDb, DataContractValidationResultDb),
+            (DataQualityCheckRunDb, DataQualityCheckResultDb),
+        ):
+            run_ids = [
+                r[0] for r in db.query(run_model.id)
+                .filter(run_model.contract_id == contract_id).all()
+            ]
+            if run_ids:
+                db.query(result_model).filter(
+                    result_model.run_id.in_(run_ids)
+                ).delete(synchronize_session=False)
+                db.query(run_model).filter(
+                    run_model.contract_id == contract_id
+                ).delete(synchronize_session=False)
+
         # Perform deletion
         data_contract_repo.remove(db=db, id=contract_id)
         
