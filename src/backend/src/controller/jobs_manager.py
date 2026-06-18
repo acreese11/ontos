@@ -398,14 +398,6 @@ class JobsManager:
         if job_parameters:
             merged_params.update({k: str(v) for k, v in job_parameters.items()})
 
-        # SubmitRun doesn't accept `parameters=` at the top level the way
-        # JobSettings does — but jobs.submit honors {{job.parameters.foo}} via
-        # parameter substitution from spark_python_task.parameters at the time
-        # of run. Since our YAML wires the task params with placeholders, the
-        # right shape is to pass merged params via `python_named_params` …
-        # except SubmitTask doesn't have that either. The reliable path is to
-        # rewrite the task parameters list, replacing `{{job.parameters.NAME}}`
-        # placeholders with their resolved values directly.
         # jobs.submit() (SubmitRun) does NOT support job-level `parameters`, so the
         # {{job.parameters.NAME}} placeholders can't be substituted server-side. Resolve
         # them here for BOTH task shapes: spark_python_task.parameters (list) and

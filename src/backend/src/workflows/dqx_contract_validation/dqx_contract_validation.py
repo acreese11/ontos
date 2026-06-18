@@ -48,7 +48,7 @@ ontos_base_url = dbutils.widgets.get("ontos_base_url")
 pipeline_id = dbutils.widgets.get("pipeline_id") or "dqx_contract_validation"
 schema_index = int(dbutils.widgets.get("schema_index") or "0")
 write_quarantine = (dbutils.widgets.get("write_quarantine") or "true").lower() == "true"
-databricks_host = dbutils.widgets.get("databricks_host")
+databricks_host = dbutils.widgets.get("databricks_host") or ""
 secrets_scope = dbutils.widgets.get("secrets_scope")
 client_id_key = dbutils.widgets.get("client_id_key") or "client_id"
 client_secret_key = dbutils.widgets.get("client_secret_key") or "client_secret"
@@ -74,6 +74,7 @@ print(f"write_quarantine= {write_quarantine}")
 # COMMAND ----------
 import base64
 import json
+import os
 import tempfile
 import urllib.error
 import urllib.request
@@ -81,6 +82,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from pyspark.sql import functions as F
+from pyspark.sql.types import StructType, StructField, StringType, BooleanType
 from databricks.sdk import WorkspaceClient
 
 
@@ -178,7 +180,12 @@ declared = [
     for p in (schema.get("properties") or [])
 ]
 print(f"\ndeclared schema ({len(declared)} columns):")
-display(spark.createDataFrame(declared)) if declared else print("  (no properties)")
+# Explicit schema so all-None inference can't crash the cell.
+_decl_schema = StructType([
+    StructField("column", StringType()), StructField("type", StringType()),
+    StructField("required", BooleanType()),
+])
+display(spark.createDataFrame(declared, schema=_decl_schema)) if declared else print("  (no properties)")
 
 # COMMAND ----------
 # MAGIC %md ## Step 2 — Resolve the validation strategy
@@ -212,15 +219,21 @@ with tempfile.NamedTemporaryFile(suffix=".yaml", mode="w", delete=False) as f:
     contract_yaml_path = f.name
 
 generator = DQGenerator(workspace_client=runtime_ws, spark=spark)
-all_rules = generator.generate_rules_from_contract(
-    contract_file=contract_yaml_path,
-    generate_schema_validation=True,
-    generate_predefined_rules=True,
-    process_text_rules=False,
-    # Contract is the consumer's OUTPUT GUARANTEE, not a mirror of every producer-side column.
-    # Permissive mode: contract columns must exist with matching types, but extras + order are ok.
-    strict_schema_validation=False,
-)
+try:
+    all_rules = generator.generate_rules_from_contract(
+        contract_file=contract_yaml_path,
+        generate_schema_validation=True,
+        generate_predefined_rules=True,
+        process_text_rules=False,
+        # Contract is the consumer's OUTPUT GUARANTEE, not a mirror of every producer-side column.
+        # Permissive mode: contract columns must exist with matching types, but extras + order are ok.
+        strict_schema_validation=False,
+    )
+finally:
+    try:
+        os.unlink(contract_yaml_path)
+    except OSError:
+        pass
 
 # DQGenerator emits rules for EVERY schema in the contract; this run validates one schema
 # (schema_index). Keep only rules tagged for this schema (or untagged dataset-wide rules) —
@@ -236,19 +249,28 @@ print(
 
 # Show the rules as a table — function, criticality, target columns, and whether it came from
 # the contract's explicit quality block or was derived from a constraint.
+def _rule_columns(check: Optional[dict]) -> str:
+    args = (check or {}).get("arguments", {}) or {}
+    cols = args.get("columns") or ([args.get("column")] if args.get("column") else [])
+    return ", ".join(str(c) for c in cols if c is not None)
+
 rule_view = [
     {
         "name": r.get("name"),
         "function": (r.get("check") or {}).get("function"),
         "criticality": r.get("criticality"),
-        "columns": ", ".join((r.get("check") or {}).get("arguments", {}).get("columns", []) or
-                             ([(r.get("check") or {}).get("arguments", {}).get("column")]
-                              if (r.get("check") or {}).get("arguments", {}).get("column") else [])),
+        "columns": _rule_columns(r.get("check")),
         "source": r.get("user_metadata", {}).get("rule_type", "derived"),
     }
     for r in rules
 ]
-display(spark.createDataFrame(rule_view)) if rule_view else print("no rules to apply")
+# Explicit schema so a rule with an all-None field can't break inference.
+_rule_schema = StructType([
+    StructField("name", StringType()), StructField("function", StringType()),
+    StructField("criticality", StringType()), StructField("columns", StringType()),
+    StructField("source", StringType()),
+])
+display(spark.createDataFrame(rule_view, schema=_rule_schema)) if rule_view else print("no rules to apply")
 
 # COMMAND ----------
 # MAGIC %md ## Step 4 — Read the target table
@@ -268,8 +290,8 @@ if strategy["strategy"] == "time-window" and strategy.get("column"):
 else:
     print("full scan")
 
-rows_in = df.count()
-print(f"rows to validate: {rows_in}")
+rows_before = df.count()
+print(f"rows to validate: {rows_before}")
 display(df.limit(20))
 
 # COMMAND ----------
@@ -293,8 +315,10 @@ checked = engine.apply_checks_by_metadata(df, rules)  # adds _errors, _warnings 
 checked.cache()
 rows_in = checked.count()
 
-error_rows = checked.where(F.size("_errors") > 0)
-warn_rows = checked.where(F.size("_warnings") > 0)
+# DQX writes NULL (not []) into _errors/_warnings for a clean row — match DQX's own
+# get_invalid() semantics (isNotNull) rather than size()>0.
+error_rows = checked.where(F.col("_errors").isNotNull())
+warn_rows = checked.where(F.col("_warnings").isNotNull())
 error_count = error_rows.count()
 warn_count = warn_rows.count()
 pass_count = rows_in - error_count
@@ -309,13 +333,13 @@ print(f"score (errors only) = {score:.2f}%   →   {pass_count}/{rows_in} pass")
 
 # COMMAND ----------
 err_break = (
-    checked.where(F.size("_errors") > 0)
+    checked.where(F.col("_errors").isNotNull())
     .select(F.explode("_errors").alias("e"))
     .groupBy(F.col("e.name").alias("rule"), F.col("e.function").alias("function"))
     .count().withColumn("severity", F.lit("error")).orderBy(F.desc("count"))
 )
 warn_break = (
-    checked.where(F.size("_warnings") > 0)
+    checked.where(F.col("_warnings").isNotNull())
     .select(F.explode("_warnings").alias("w"))
     .groupBy(F.col("w.name").alias("rule"), F.col("w.function").alias("function"))
     .count().withColumn("severity", F.lit("warning")).orderBy(F.desc("count"))
