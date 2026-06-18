@@ -201,8 +201,18 @@ async def stream_contract(
             recorded_session_id = session.id
             user_prompt = f"Draft a data contract for {body.catalog}.{body.schema_}.{body.table}"
             session_store.add_message(db, recorded_session_id, MessageRole.USER, content=user_prompt)
+            # Commit NOW so the session + user turn are durable before the long (~90s)
+            # generation stream. The repo only flushes; without this commit the record
+            # lives in an uncommitted txn that rolls back if the stream is interrupted
+            # (client disconnect, timeout, app restart/redeploy) — so the turn would
+            # never appear in history. The assistant summary is committed after the drain.
+            db.commit()
         except Exception:
             logger.exception("Failed to record copilot user message for contract draft")
+            try:
+                db.rollback()
+            except Exception:
+                pass
             recorded_session_id = None
 
     async def event_publisher():
@@ -259,8 +269,13 @@ async def stream_contract(
                 session_store.add_message(
                     db, recorded_session_id, MessageRole.ASSISTANT, content=summary
                 )
+                db.commit()  # durable now (the repo only flushes)
             except Exception:
                 logger.exception("Failed to record copilot assistant summary for contract draft")
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
 
     return EventSourceResponse(
         event_publisher(),
