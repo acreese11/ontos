@@ -29,7 +29,7 @@ def _derive_workspace_descriptor_from_host(host: Optional[str]) -> Dict[str, Any
     that want the numeric workspace id can swap it in once we have it).
     """
     if not host:
-        return {"id": "current", "name": "Current workspace", "deployment_name": "current"}
+        return {"id": "current", "name": "Current workspace", "deployment_name": "current", "url": None}
     h = host.strip().rstrip("/")
     if h.startswith("https://"):
         h = h[len("https://"):]
@@ -38,7 +38,9 @@ def _derive_workspace_descriptor_from_host(host: Optional[str]) -> Dict[str, Any
     # First label of the host is the deployment subdomain (e.g.
     # "ontos-7474659920352264.aws.databricksapps.com" → "ontos-7474659920352264").
     deployment = h.split(".", 1)[0] if h else "current"
-    return {"id": deployment, "name": deployment, "deployment_name": deployment}
+    # ``url`` = the full workspace URL (DATABRICKS_HOST). Powers UI deep links such as the
+    # Unity Catalog Explorer clickthrough from a contract's physicalName.
+    return {"id": deployment, "name": deployment, "deployment_name": deployment, "url": f"https://{h}" if h else None}
 
 
 @router.get("/workspace/accessible-workspaces")
@@ -76,7 +78,8 @@ async def list_accessible_workspaces(
     ``DATABRICKS_HOST``. Always returns at least one entry so the dropdown
     isn't empty in a working deployment.
 
-    Returns ``[{id, name, deployment_name}, ...]``.
+    Returns ``[{id, name, deployment_name, url}, ...]`` where ``url`` is the full
+    workspace URL (drives UI deep links like the UC Catalog Explorer clickthrough).
     """
     settings = getattr(request.app.state, 'settings', None)
     host = getattr(settings, 'DATABRICKS_HOST', None) if settings else None
