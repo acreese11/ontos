@@ -166,7 +166,9 @@ def _exchange_runas_for_app_token() -> str:
         "scope": "all-apis",
         "audience": app_client_id,
     }).encode()
-    resp = urllib.request.urlopen(urllib.request.Request(f"{host}/oidc/v1/token", data=data, method="POST"))
+    resp = urllib.request.urlopen(
+        urllib.request.Request(f"{host}/oidc/v1/token", data=data, method="POST"), timeout=30
+    )
     return json.loads(resp.read())["access_token"]
 
 
@@ -183,6 +185,11 @@ def _resolve_token() -> str:
             print(f"Run-As token-exchange failed ({e}); falling back to SP M2M…")
     elif auth_mode != "app_sp" and not app_client_id:
         print("auth_mode=run_as but no app_client_id provided; falling back to SP M2M…")
+    if not secrets_scope:
+        raise ValueError(
+            "Run-As token-exchange unavailable and no secrets_scope set — cannot fall back to "
+            "SP M2M. Provide app_client_id (run_as) or secrets_scope + keys (app_sp)."
+        )
     cid = _read_secret(runtime_ws, secrets_scope, client_id_key)
     csec = _read_secret(runtime_ws, secrets_scope, client_secret_key)
     tok = _bearer_token(_ontos_workspace_client(databricks_host, cid, csec))

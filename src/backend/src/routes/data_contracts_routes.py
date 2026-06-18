@@ -2083,14 +2083,16 @@ async def run_dqx_validation(
     # audit logs. Instead, the credentials live in a Databricks Secrets scope
     # (bootstrapped at app startup), and we hand the job {{secrets/scope/key}}
     # placeholders that Databricks substitutes at task launch.
-    if not (settings.DATABRICKS_CLIENT_ID and settings.DATABRICKS_CLIENT_SECRET):
+    # DATABRICKS_CLIENT_ID is the audience for the Run-As token exchange (the app's oauth
+    # client id). DATABRICKS_CLIENT_SECRET is only needed for the SP-M2M fallback, so it's
+    # no longer required up front.
+    if not settings.DATABRICKS_CLIENT_ID:
         raise HTTPException(
             status_code=422,
             detail=(
-                "DATABRICKS_CLIENT_ID / DATABRICKS_CLIENT_SECRET are not set in the app "
-                "environment. Databricks Apps auto-inject these for deployed apps; for "
-                "local dev, set them in .env using a service principal that has CAN_USE "
-                "on the deployed Ontos app."
+                "DATABRICKS_CLIENT_ID is not set in the app environment. Databricks Apps "
+                "auto-inject it for deployed apps; for local dev set it in .env (the app's "
+                "oauth client id, used as the Run-As token-exchange audience)."
             ),
         )
 
