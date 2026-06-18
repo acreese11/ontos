@@ -24,6 +24,22 @@ from src.models.workflow_configurations import WorkflowParameterDefinition, Work
 
 logger = get_logger(__name__)
 
+_JOB_PARAM_PREFIX = '{{job.parameters.'
+
+
+def _resolve_job_param_placeholder(value: Any, merged_params: Dict[str, str]) -> Any:
+    """Resolve a ``{{job.parameters.NAME}}`` placeholder to its value.
+
+    ``jobs.submit()`` (transient runs) has no server-side job-parameter substitution —
+    unlike a persisted job with a ``parameters`` block — so placeholders in task specs
+    (``spark_python_task.parameters`` list items, ``notebook_task.base_parameters`` dict
+    values) must be resolved here. Non-placeholder values pass through unchanged; an
+    unknown parameter name resolves to ''.
+    """
+    if isinstance(value, str) and value.startswith(_JOB_PARAM_PREFIX) and value.endswith('}}'):
+        return merged_params.get(value[len(_JOB_PARAM_PREFIX):-2], '')
+    return value
+
 
 class JobsManager:
     def __init__(self, db: Session, ws_client: WorkspaceClient, *, workflows_root: Optional[Path] = None, notifications_manager=None, settings=None, workspace_deployer=None):
@@ -382,35 +398,33 @@ class JobsManager:
         if job_parameters:
             merged_params.update({k: str(v) for k, v in job_parameters.items()})
 
-        # SubmitRun doesn't accept `parameters=` at the top level the way
-        # JobSettings does — but jobs.submit honors {{job.parameters.foo}} via
-        # parameter substitution from spark_python_task.parameters at the time
-        # of run. Since our YAML wires the task params with placeholders, the
-        # right shape is to pass merged params via `python_named_params` …
-        # except SubmitTask doesn't have that either. The reliable path is to
-        # rewrite the task parameters list, replacing `{{job.parameters.NAME}}`
-        # placeholders with their resolved values directly.
+        # jobs.submit() (SubmitRun) does NOT support job-level `parameters`, so the
+        # {{job.parameters.NAME}} placeholders can't be substituted server-side. Resolve
+        # them here for BOTH task shapes: spark_python_task.parameters (list) and
+        # notebook_task.base_parameters (dict → notebook widgets).
         resolved_tasks: List[jobs.SubmitTask] = []
         for st in submit_tasks:
-            new_st = st
             spt = getattr(st, 'spark_python_task', None)
+            nbt = getattr(st, 'notebook_task', None)
+            new_spt = spt
+            new_nbt = nbt
             if spt and getattr(spt, 'parameters', None):
-                resolved = []
-                for p in spt.parameters:
-                    if isinstance(p, str) and p.startswith('{{job.parameters.') and p.endswith('}}'):
-                        name = p[len('{{job.parameters.'):-2]
-                        resolved.append(merged_params.get(name, ''))
-                    else:
-                        resolved.append(p)
                 new_spt = jobs.SparkPythonTask(
                     python_file=spt.python_file,
-                    parameters=resolved,
+                    parameters=[_resolve_job_param_placeholder(p, merged_params) for p in spt.parameters],
                     source=getattr(spt, 'source', None),
                 )
+            if nbt and getattr(nbt, 'base_parameters', None):
+                new_nbt = jobs.NotebookTask(
+                    notebook_path=nbt.notebook_path,
+                    base_parameters={k: _resolve_job_param_placeholder(v, merged_params) for k, v in nbt.base_parameters.items()},
+                    source=getattr(nbt, 'source', None),
+                )
+            if new_spt is not spt or new_nbt is not nbt:
                 new_st = jobs.SubmitTask(
                     task_key=st.task_key,
                     spark_python_task=new_spt,
-                    notebook_task=st.notebook_task,
+                    notebook_task=new_nbt,
                     python_wheel_task=st.python_wheel_task,
                     spark_jar_task=st.spark_jar_task,
                     environment_key=st.environment_key,
@@ -418,6 +432,8 @@ class JobsManager:
                     timeout_seconds=st.timeout_seconds,
                     depends_on=st.depends_on,
                 )
+            else:
+                new_st = st
             resolved_tasks.append(new_st)
 
         # 4. Submit. SubmitRun does not need a job id; the run is self-contained.

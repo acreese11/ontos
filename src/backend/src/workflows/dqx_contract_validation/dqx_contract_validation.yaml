@@ -1,42 +1,26 @@
 name: "DQX Contract Validation"
-description: "Reference federated quality pipeline: pull contract from Ontos, run DQX-native checks, write quarantine, post metrics back."
+description: "Reference federated quality pipeline (notebook): pull contract from Ontos, run DQX-native checks, separate errors vs warnings, write quarantine, post metrics back. Runs as a notebook so the execution is visible step-by-step."
 format: "MULTI_TASK"
 
-environments:
-  - environment_key: "dqx-env"
-    spec:
-      # Track the newest serverless environment so the Python floor stays
-      # current. We deliberately don't pin datacontract-cli — let pip resolve
-      # the highest version compatible with this client's Python.
-      client: "5"
-      dependencies:
-        - "databricks-labs-dqx>=0.15.0"
-        - "datacontract-cli"
+# Runs on serverless compute (no cluster declared → jobs_manager omits cluster params).
+# Dependencies are installed by the notebook's first %pip cell so the run is self-contained
+# and the DQX version is visible on screen.
 
 tasks:
   - task_key: "dqx_contract_validation"
-    spark_python_task:
-      python_file: "dqx_contract_validation.py"
-      parameters:
-        - "--contract_id"
-        - "{{job.parameters.contract_id}}"
-        - "--ontos_base_url"
-        - "{{job.parameters.ontos_base_url}}"
-        - "--pipeline_id"
-        - "{{job.parameters.pipeline_id}}"
-        - "--schema_index"
-        - "{{job.parameters.schema_index}}"
-        - "--write_quarantine"
-        - "{{job.parameters.write_quarantine}}"
-        - "--databricks_host"
-        - "{{job.parameters.databricks_host}}"
-        - "--secrets_scope"
-        - "{{job.parameters.secrets_scope}}"
-        - "--client_id_key"
-        - "{{job.parameters.client_id_key}}"
-        - "--client_secret_key"
-        - "{{job.parameters.client_secret_key}}"
-    environment_key: "dqx-env"
+    notebook_task:
+      # Resolved by jobs_manager to the deployed workspace notebook path (no extension).
+      notebook_path: "dqx_contract_validation"
+      base_parameters:
+        contract_id: "{{job.parameters.contract_id}}"
+        ontos_base_url: "{{job.parameters.ontos_base_url}}"
+        pipeline_id: "{{job.parameters.pipeline_id}}"
+        schema_index: "{{job.parameters.schema_index}}"
+        write_quarantine: "{{job.parameters.write_quarantine}}"
+        databricks_host: "{{job.parameters.databricks_host}}"
+        secrets_scope: "{{job.parameters.secrets_scope}}"
+        client_id_key: "{{job.parameters.client_id_key}}"
+        client_secret_key: "{{job.parameters.client_secret_key}}"
 
 parameters:
   contract_id: ""
