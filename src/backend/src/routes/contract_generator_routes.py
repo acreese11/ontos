@@ -176,7 +176,10 @@ async def stream_contract(
     state_user = getattr(request.state, "user", None)
     if state_user:
         contract_author = getattr(state_user, "username", None) or getattr(state_user, "email", None)
-    session_user_id = current_user.email
+    # UserInfo.email is str | None — a service principal can have no email. Fall back
+    # to username so we never store None as the session owner (which would corrupt the
+    # ownership index and bucket all None-email users together).
+    session_user_id = current_user.email or getattr(current_user, "username", None)
     contract_author = contract_author or session_user_id
 
     # Resolve/create the copilot session and record the user prompt BEFORE
@@ -185,7 +188,7 @@ async def stream_contract(
     # drafted contract). The assistant summary is persisted AFTER the stream drains.
     session_store = get_session_store()
     recorded_session_id: Optional[str] = None
-    if body.session_id is not None:
+    if body.session_id is not None and session_user_id:
         try:
             # Empty string => first copilot turn, create a session; a real id
             # continues an existing one (falling back to create if it's gone or
