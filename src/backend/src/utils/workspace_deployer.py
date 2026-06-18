@@ -141,6 +141,16 @@ class WorkspaceDeployer:
 
             if is_notebook_source:
                 notebook_path = workspace_path[:-3]  # drop ".py" → notebook path
+                # import(overwrite=True) over an existing FILE keeps it a FILE — it does
+                # NOT convert it to a NOTEBOOK. Older AUTO-based deploys left a FILE at this
+                # path (and a stale .py at the un-stripped path), so a notebook_task then
+                # fails with "... is not a notebook". Delete both first so SOURCE import
+                # creates a clean NOTEBOOK.
+                for stale in (notebook_path, workspace_path):
+                    try:
+                        self._client.workspace.delete(stale)
+                    except Exception:
+                        pass  # absent (normal first deploy) or already a notebook
                 self._client.workspace.import_(
                     path=notebook_path,
                     content=encoded_content,
