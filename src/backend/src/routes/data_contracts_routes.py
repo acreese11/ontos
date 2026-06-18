@@ -2077,6 +2077,27 @@ async def run_dqx_validation(
 
     jobs_manager = get_jobs_manager(request)
 
+    # Resolve the app's oauth2_app_client_id — the AUDIENCE for the Run-As token exchange.
+    # This is NOT DATABRICKS_CLIENT_ID: that env var is the app's runtime service principal
+    # (App.service_principal_client_id), whereas the Apps proxy only accepts an exchanged
+    # token whose audience is the app's OAuth client (App.oauth2_app_client_id). Passing the
+    # SP id made the exchange fail and silently fall back to SP M2M. Look it up via apps.get
+    # and cache on app.state; fall back to DATABRICKS_CLIENT_ID if the lookup fails (the job
+    # then degrades to the app_sp path).
+    app_oauth_client_id = getattr(request.app.state, 'app_oauth_client_id', None)
+    if not app_oauth_client_id:
+        try:
+            app_info = jobs_manager._client.apps.get(name=settings.DATABRICKS_APP_NAME)
+            app_oauth_client_id = getattr(app_info, 'oauth2_app_client_id', None)
+            if app_oauth_client_id:
+                request.app.state.app_oauth_client_id = app_oauth_client_id
+        except Exception as e:
+            logger.warning(
+                "Could not resolve oauth2_app_client_id via apps.get(%s): %s; Run-As will "
+                "fall back to app_sp", settings.DATABRICKS_APP_NAME, e,
+            )
+    app_oauth_client_id = app_oauth_client_id or settings.DATABRICKS_CLIENT_ID or ''
+
     # Databricks Apps proxy rejects job runtime tokens; it accepts OAuth M2M
     # tokens minted from the app's own SP credentials. We don't pass the raw
     # values through job parameters — they'd be visible in run details and
@@ -2145,12 +2166,12 @@ async def run_dqx_validation(
                     'write_quarantine': 'true' if body.write_quarantine else 'false',
                     # Run-As auth (default): the job exchanges its OWN Run-As identity for an
                     # app-audience OAuth token (no shared secret). app_client_id is the
-                    # audience — the app's own oauth client id (DATABRICKS_CLIENT_ID). The
-                    # SP-secret fields below are the fallback if the exchange fails. We pass
-                    # secret scope+key NAMES (not values) — secret-ref substitution doesn't
-                    # cascade through {{job.parameters.foo}}.
+                    # audience — the app's oauth2_app_client_id (resolved above). The SP-secret
+                    # fields below are the fallback if the exchange fails. We pass secret
+                    # scope+key NAMES (not values) — secret-ref substitution doesn't cascade
+                    # through {{job.parameters.foo}}.
                     'auth_mode': 'run_as',
-                    'app_client_id': settings.DATABRICKS_CLIENT_ID or '',
+                    'app_client_id': app_oauth_client_id,
                     'databricks_host': host.removeprefix('https://').removeprefix('http://') if host else '',
                     'secrets_scope': settings.APP_SECRETS_SCOPE,
                     'client_id_key': settings.APP_SECRETS_CLIENT_ID_KEY,
