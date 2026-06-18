@@ -218,6 +218,24 @@ const getStatusColor = (status: string | undefined): 'default' | 'secondary' | '
   return 'default';
 };
 
+// External clickthrough to the real UC table in Catalog Explorer. Renders only when an
+// href is provided (caller passes null for non-UC names), so the href is computed once.
+function UcExplorerLink({ href }: { href: string | null }) {
+  if (!href) return null
+  return (
+    <a
+      href={href}
+      className="flex items-center gap-1.5 text-sm text-primary hover:underline"
+      target="_blank"
+      rel="noopener noreferrer"
+      title="Open the table in Unity Catalog Explorer"
+    >
+      <ExternalLink className="h-4 w-4" />
+      Unity Catalog
+    </a>
+  )
+}
+
 export default function DataContractDetails() {
   const { t } = useTranslation(['data-contracts', 'common'])
   const { contractId } = useParams<{ contractId: string }>()
@@ -862,14 +880,15 @@ export default function DataContractDetails() {
         toast({ title: 'DQX validation not submitted', description: detail, variant: 'destructive' })
         return
       }
-      const runs: Array<{ schema_name: string; run_id: number; monitor_url: string | null }> = body?.runs || []
-      const failures: Array<{ schema_name: string; error: string }> = body?.failures || []
+      // One run now validates every schema in the contract (the notebook iterates them),
+      // so the response no longer carries a per-schema name.
+      const runs: Array<{ run_id: number; monitor_url: string | null }> = body?.runs || []
+      const failures: Array<{ error: string }> = body?.failures || []
       const firstMonitorUrl: string | null = runs[0]?.monitor_url || body?.monitor_url || null
-      const description = runs.length > 1
-        ? `Submitted ${runs.length} runs (one per schema: ${runs.map(r => r.schema_name).join(', ')}). The quality panel will refresh as metrics arrive.`
-        : runs.length === 1
-          ? `Run ${runs[0].run_id} started for schema '${runs[0].schema_name}'. The quality panel will refresh when metrics arrive.`
-          : `Run ${body.run_id} started.`
+      const runId = runs[0]?.run_id ?? body?.run_id
+      const description = runId
+        ? `Run ${runId} started — validating all schemas in the contract. The quality panel will refresh when metrics arrive.`
+        : 'DQX validation started. The quality panel will refresh when metrics arrive.'
       toast({
         title: failures.length
           ? `DQX validation: ${runs.length} submitted, ${failures.length} failed`
@@ -2328,18 +2347,7 @@ export default function DataContractDetails() {
                         {contract.schema[0].physicalName}
                       </a>
                     )}
-                    {ucExplorerHref(contract.schema[0].physicalName) && (
-                      <a
-                        href={ucExplorerHref(contract.schema[0].physicalName)!}
-                        className="flex items-center gap-1.5 text-sm text-primary hover:underline"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        title="Open the table in Unity Catalog Explorer"
-                      >
-                        <ExternalLink className="h-4 w-4" />
-                        Unity Catalog
-                      </a>
-                    )}
+                    <UcExplorerLink href={ucExplorerHref(contract.schema[0].physicalName)} />
                     {canEditInPlace && (
                       <>
                         <Button size="sm" variant="ghost" disabled={loadingEditProperties} onClick={() => handleEditSchema(0)}>
@@ -2484,18 +2492,7 @@ export default function DataContractDetails() {
                           {contract.schema[selectedSchemaIndex].physicalName}
                         </a>
                       )}
-                      {ucExplorerHref(contract.schema[selectedSchemaIndex]?.physicalName) && (
-                        <a
-                          href={ucExplorerHref(contract.schema[selectedSchemaIndex].physicalName)!}
-                          className="flex items-center gap-1.5 text-sm text-primary hover:underline"
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          title="Open the table in Unity Catalog Explorer"
-                        >
-                          <ExternalLink className="h-4 w-4" />
-                          Unity Catalog
-                        </a>
-                      )}
+                      <UcExplorerLink href={ucExplorerHref(contract.schema[selectedSchemaIndex]?.physicalName)} />
                       {canEditInPlace && (
                         <>
                           <Button size="sm" variant="ghost" disabled={loadingEditProperties} onClick={() => handleEditSchema(selectedSchemaIndex)}>
@@ -2646,18 +2643,7 @@ export default function DataContractDetails() {
                           {contract.schema[selectedSchemaIndex].physicalName}
                         </a>
                       )}
-                      {ucExplorerHref(contract.schema[selectedSchemaIndex]?.physicalName) && (
-                        <a
-                          href={ucExplorerHref(contract.schema[selectedSchemaIndex].physicalName)!}
-                          className="flex items-center gap-1.5 text-sm text-primary hover:underline"
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          title="Open the table in Unity Catalog Explorer"
-                        >
-                          <ExternalLink className="h-4 w-4" />
-                          Unity Catalog
-                        </a>
-                      )}
+                      <UcExplorerLink href={ucExplorerHref(contract.schema[selectedSchemaIndex]?.physicalName)} />
                       {canEditInPlace && (
                         <>
                           <Button size="sm" variant="ghost" disabled={loadingEditProperties} onClick={() => handleEditSchema(selectedSchemaIndex)}>

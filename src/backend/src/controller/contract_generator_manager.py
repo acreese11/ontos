@@ -237,6 +237,11 @@ def _finalize_contract(
     for srv in servers:
         if isinstance(srv, dict):
             srv.setdefault("type", "databricks")
+            if srv.get("catalog") and srv["catalog"] != catalog:
+                warnings.append(
+                    f"server {srv.get('server')!r} catalog {srv['catalog']!r} → {catalog!r} "
+                    f"(forced to the generated table's UC location)"
+                )
             srv["catalog"] = catalog
             srv["schema"] = schema
     contract["servers"] = servers

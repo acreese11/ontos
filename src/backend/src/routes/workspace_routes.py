@@ -78,7 +78,8 @@ async def list_accessible_workspaces(
     ``DATABRICKS_HOST``. Always returns at least one entry so the dropdown
     isn't empty in a working deployment.
 
-    Returns ``[{id, name, deployment_name}, ...]``.
+    Returns ``[{id, name, deployment_name, url}, ...]`` where ``url`` is the full
+    workspace URL (drives UI deep links like the UC Catalog Explorer clickthrough).
     """
     settings = getattr(request.app.state, 'settings', None)
     host = getattr(settings, 'DATABRICKS_HOST', None) if settings else None
