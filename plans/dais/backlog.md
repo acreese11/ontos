@@ -16,11 +16,16 @@ Updated 2026-06-17. Legend: ✅ done · ⏳ in progress · ⚠️ blocked · ❌
    Maintain talk tracks carry the DQX-native story (0.15 + #1191 + "contract is the ruleset");
    Author got one light line. Doc reorg (#52) + tracker consolidation done. Independent review
    on record (2 blockers fixed). *Remaining non-talk-track docs PRs (#31/#45/#43) stay deferred.*
-2. **DQX execution as a notebook + troubleshoot the 100% `aws-dais` failure.** 🟢 **CODE-COMPLETE**
-   (validation pending redeploy). Job reworked to a `notebook_task`; root cause confirmed +
-   fixed. Details below. ⬅️ *needs redeploy + a live re-run to confirm.*
-3. **Ask-Ontos draft persistence.** ❌ (after #2)
-4. **Redeploy** FE + free apps. ❌ Last / as-needed for remote testing.
+2. **DQX execution as a notebook + troubleshoot the 100% `aws-dais` failure.** ✅ **DONE +
+   VALIDATED.** Reworked to a `notebook_task`; root cause fixed (errors-only scoring); Run-As
+   token-exchange auth solved (no shared SP secret); multi-schema + full-load; sample failing
+   records. Validated by live serverless runs on `aws-dais` (#56). Details below.
+3. **Ask-Ontos draft persistence.** ✅ **DONE** (#55) — copilot draft turns persist in
+   `llm_sessions`; verified end-to-end via the API (create + continue, no fork).
+4. **Contract↔UC linkage (Q1, Alan 2026-06-18).** ✅ **DONE** (#57) — generator forces the full
+   3-level UC `physicalName`; UC Catalog Explorer clickthrough in the contract details view.
+5. **Redeploy** FE + free apps. ⏳ **IN PROGRESS** — makes all of the above live + gives the
+   DQX/auth wiring its final end-to-end confirmation through the Run-DQX button.
 
 Deferred (revisit, do **not** start without Alan's go): show-all-quality-rules; test-check
 warehouse fix; the non-talk-track docs PRs (#31 / #45 / #43 — leave open, tracked below).
@@ -29,17 +34,24 @@ warehouse fix; the non-talk-track docs PRs (#31 / #45 / #43 — leave open, trac
 
 ## 🔴 Big priorities (detail)
 
-### 1. DQX execution as a NOTEBOOK — 🟢 code-complete (PR pending)
-Reworked `dqx_contract_validation` from a `spark_python_task` to a **`notebook_task`**
-(`.py` `# COMMAND`-cell notebook source). Decisions (Alan): **replace** the task; format
-**.py # COMMAND**. Self-contained via a `%pip install databricks-labs-dqx>=0.15.0` cell
-(visible on screen). Each of the 6 steps `display()`s its work; the **errors-vs-warnings
-per-check breakdown** cell is the money shot. App-side: `jobs_manager.submit_workflow` now
-resolves `{{job.parameters.NAME}}` into `notebook_task.base_parameters` too (jobs.submit has
-no server-side job-param substitution) — unit-tested. The Run-DQX trigger is unchanged
-(already passes job-level params). Deploy imports the `.py` as a notebook via
-`ImportFormat.AUTO` + the `# Databricks notebook source` header → path resolves.
-**Pending:** redeploy + a live re-run to confirm the notebook path + deps + a clean result.
+### 1. DQX execution as a NOTEBOOK — ✅ DONE + validated (#54, #56)
+Reworked `dqx_contract_validation` to a **`notebook_task`** (`.py` `# COMMAND`-cell source),
+self-contained via a `%pip install databricks-labs-dqx>=0.15.0` cell. Each step `display()`s
+its work; the **errors-vs-warnings per-check breakdown** + **sample failing/warned records**
+are the demo money shots. **Iterates every schema** in the contract in one run (dropped
+`schema_index`); **full load** (dropped the validation-strategy machinery). Removed `.cache()`
+(PERSIST unsupported on serverless). App-side: `jobs_manager.submit_workflow` resolves
+`{{job.parameters.NAME}}` into `notebook_task.base_parameters` (unit-tested); the route submits
+**one run per contract**. **Deployer fix:** `WorkspaceDeployer` imports a notebook-source `.py`
+with `ImportFormat.SOURCE` (+ PYTHON, extension stripped) — `AUTO` made it a plain FILE a
+`notebook_task` can't run. **Validated** by live serverless runs on `aws-dais`.
+
+### 1b. Run-As auth — ✅ SOLVED (#56), no shared SP secret
+The job authenticates to Ontos as its **own Run-As identity** by exchanging its internal token
+for an app-audience OAuth token via `{workspace}/oidc/v1/token` (`audience = app oauth client
+id`). Confirmed: bare runtime token → 401; exchanged → 200. Run-As principal needs only
+**CAN_USE** on the app. Falls back to SP M2M from a secret. See memory
+`project_databricks_app_runas_token_exchange`.
 
 ### 2. 100% `aws-dais` failure — ✅ ROOT-CAUSED (run 1077521786352682, contract `live_flights`)
 The run **succeeded**; "100% failure" was the *quality result*: `pass=0 fail=11850 score=0%`.
@@ -72,6 +84,12 @@ negative-altitude rows `alt_baro_positive` catches → 99.80%).
 - **Talk tracks finalized (#22)** — Enforce carries DQX-native (0.15 + #1191 + "contract is the
   ruleset" + Author→Enforce bridge); Maintain notes the subscribe→notify bridge is wired;
   Author got one light line; Enforce Readiness flagged RE-VERIFY (100% aws-dais failure).
+- **DQX notebook + Run-As auth (#54, #56)** — demo-visible notebook, 100% failure fixed
+  (errors-only scoring), Run-As token-exchange auth, multi-schema, sample failing records,
+  deployer notebook-import fix. Validated on `aws-dais`.
+- **Ask-Ontos draft persistence (#55)** — copilot draft turns land in `llm_sessions`.
+- **Contract↔UC linkage (#57)** — full 3-level `physicalName` on AI drafts + UC Catalog
+  Explorer clickthrough.
 - **Doc reorg (#52)** — fork/demo planning under `plans/dais/`, design/analysis under `docs/dais/`;
   two trackers consolidated into this one (`plans/dais/backlog.md`).
 - **Earlier** — live-run bug fixes (#12); Compliance/Contract Coverage (#16/#18); deck pulled +
