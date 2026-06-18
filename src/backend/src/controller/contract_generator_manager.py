@@ -248,13 +248,19 @@ def _finalize_contract(
             srv["schema"] = schema
     contract["servers"] = servers
 
-    # Deterministically set each column's logicalType (and physicalType) from the INSPECTED
-    # UC type, using the same mapping source-conformance applies to the live table. The LLM
-    # only picks from a scalar vocabulary (string/integer/number/boolean/date/timestamp) and
-    # mis-declares complex columns (array/struct/map) as 'string'. Deriving from the live type
-    # guarantees a fresh contract matches its table (no type-drift false positives) and types
-    # array→array, struct/map→object correctly. Only touches the object mapped to the inspected
-    # table (matched by physicalName); other schema objects (other tables) are left alone.
+    # Reconcile the generated schema with the INSPECTED UC columns for the object mapped to
+    # the inspected table. Two deterministic corrections, using the same
+    # map_column_type_to_logical_type that source-conformance applies to the live table — so a
+    # fresh contract matches its table with zero drift:
+    #   1. Align logicalType/physicalType from the live type. The LLM only picks from a scalar
+    #      vocabulary (string/integer/number/boolean/date/timestamp) and mis-declares complex
+    #      columns (array/struct/map) as 'string'; deriving fixes that (array→array,
+    #      struct/map→object) and pins scalars to the live type.
+    #   2. Add any column the model omitted (under-declaration), so the table doesn't show
+    #      spurious "extra column" drift. The generator inspects every column, so the contract
+    #      should declare every column.
+    # Only touches the object matched by physicalName; other schema objects (other tables) are
+    # left alone.
     if inspected_columns:
         target_fqn = f"{catalog}.{schema}.{table}"
         by_name = {
@@ -264,13 +270,41 @@ def _finalize_contract(
         for sch in contract.get("schema", []):
             if sch.get("physicalName") != target_fqn:
                 continue
-            for prop in (sch.get("properties") or []):
-                col = by_name.get((prop.get("name") or "").strip().lower())
+            props = sch.get("properties")
+            if not isinstance(props, list):
+                props = []
+                sch["properties"] = props
+            # 1. Align declared columns to the live type.
+            declared_names = set()
+            for prop in props:
+                name_key = (prop.get("name") or "").strip().lower()
+                declared_names.add(name_key)
+                col = by_name.get(name_key)
                 if not col:
                     continue
                 prop["logicalType"] = map_column_type_to_logical_type(col.get("type_name") or None)
                 if col.get("type_text"):
                     prop["physicalType"] = col["type_text"]
+            # 2. Add columns the model omitted.
+            missing = [
+                c for c in inspected_columns
+                if c.get("name") and c["name"].strip().lower() not in declared_names
+            ]
+            for c in sorted(missing, key=lambda x: x.get("position") or 0):
+                props.append({
+                    "name": c["name"],
+                    "logicalType": map_column_type_to_logical_type(c.get("type_name") or None),
+                    "physicalType": c.get("type_text") or "",
+                    # UC nullable=True ⇒ not required; conservative for an inferred column.
+                    "required": not bool(c.get("nullable", True)),
+                    "classification": "Internal",
+                    "description": c.get("comment") or "",
+                })
+            if missing:
+                warnings.append(
+                    f"added {len(missing)} column(s) the model omitted: "
+                    + ", ".join(c["name"] for c in missing)
+                )
 
     # Force AI-draft markers on customProperties.
     cps = contract.get("customProperties") or []

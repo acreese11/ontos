@@ -108,3 +108,14 @@ class TestLogicalTypeFromInspectedType:
         c = self._finalize_with_types([{"name": "not_in_table", "logicalType": "string"}])
         props = {p["name"]: p for p in c["schema"][0]["properties"]}
         assert props["not_in_table"]["logicalType"] == "string"
+
+    def test_omitted_columns_are_added(self):
+        # The model declared only 'icao24'; every inspected column must end up declared so the
+        # table doesn't show spurious "extra column" drift.
+        c = self._finalize_with_types([{"name": "icao24", "logicalType": "string"}])
+        props = {p["name"]: p for p in c["schema"][0]["properties"]}
+        assert set(props) == {ci["name"] for ci in self.INSPECTED}  # all present
+        # added columns get the correctly-derived type
+        assert props["_errors"]["logicalType"] == "array"
+        assert props["alt_baro_ft"]["logicalType"] == "integer"
+        assert props["alt_baro_ft"]["physicalType"] == "bigint"
