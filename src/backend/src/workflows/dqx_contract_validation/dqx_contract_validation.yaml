@@ -15,8 +15,11 @@ tasks:
         contract_id: "{{job.parameters.contract_id}}"
         ontos_base_url: "{{job.parameters.ontos_base_url}}"
         pipeline_id: "{{job.parameters.pipeline_id}}"
-        schema_index: "{{job.parameters.schema_index}}"
         write_quarantine: "{{job.parameters.write_quarantine}}"
+        # Run-As auth (default): the job exchanges its own identity for an app-audience
+        # token; app_client_id is the audience. The SP-secret fields are the fallback.
+        auth_mode: "{{job.parameters.auth_mode}}"
+        app_client_id: "{{job.parameters.app_client_id}}"
         databricks_host: "{{job.parameters.databricks_host}}"
         secrets_scope: "{{job.parameters.secrets_scope}}"
         client_id_key: "{{job.parameters.client_id_key}}"
@@ -26,8 +29,9 @@ parameters:
   contract_id: ""
   ontos_base_url: ""
   pipeline_id: "dqx_contract_validation"
-  schema_index: "0"
   write_quarantine: "true"
+  auth_mode: "run_as"
+  app_client_id: ""
   databricks_host: ""
   secrets_scope: ""
   client_id_key: "client_id"

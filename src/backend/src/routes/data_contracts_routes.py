@@ -2094,9 +2094,9 @@ async def run_dqx_validation(
             ),
         )
 
-    # Resolve which schemas to validate. The job runs once per schema (each
-    # schema typically maps to one output table) so a multi-port contract
-    # exercises every port.
+    # The notebook validates EVERY schema in the contract in a single run, so we submit
+    # one job for the whole contract (was: one run per schema_index). body.schema_index is
+    # accepted for backward compatibility but no longer changes behavior.
     contract = data_contract_repo.get_with_all(db, id=contract_id)
     if contract is None:
         raise HTTPException(status_code=404, detail=f"Contract {contract_id} not found")
@@ -2106,19 +2106,6 @@ async def run_dqx_validation(
             status_code=422,
             detail=f"Contract {contract_id} has no schemas; nothing to validate.",
         )
-
-    if body.schema_index is not None:
-        if body.schema_index < 0 or body.schema_index >= len(schema_objects):
-            raise HTTPException(
-                status_code=422,
-                detail=(
-                    f"schema_index {body.schema_index} out of range; "
-                    f"contract has {len(schema_objects)} schemas."
-                ),
-            )
-        target_indices = [body.schema_index]
-    else:
-        target_indices = list(range(len(schema_objects)))
 
     host = (settings.DATABRICKS_HOST or '').rstrip('/')
     if host and not (host.startswith('http://') or host.startswith('https://')):
@@ -2146,67 +2133,43 @@ async def run_dqx_validation(
         )
     inflight.add(contract_id)
     try:
-        runs: list[dict] = []
-        failures: list[dict] = []
-        for idx in target_indices:
-            schema_obj = schema_objects[idx]
-            try:
-                run_id = jobs_manager.submit_workflow(
-                    'dqx_contract_validation',
-                    job_parameters={
-                        'contract_id': contract_id,
-                        'ontos_base_url': ontos_base_url,
-                        'pipeline_id': body.pipeline_id,
-                        'schema_index': str(idx),
-                        'write_quarantine': 'true' if body.write_quarantine else 'false',
-                        # The job pulls the OAuth M2M creds from a Databricks Secrets
-                        # scope at runtime using its own runtime credentials. We pass
-                        # only the scope+key NAMES (not values) — secret-ref
-                        # substitution doesn't cascade through {{job.parameters.foo}}.
-                        'databricks_host': host.removeprefix('https://').removeprefix('http://') if host else '',
-                        'secrets_scope': settings.APP_SECRETS_SCOPE,
-                        'client_id_key': settings.APP_SECRETS_CLIENT_ID_KEY,
-                        'client_secret_key': settings.APP_SECRETS_CLIENT_SECRET_KEY,
-                    },
-                    run_name_suffix=f"{contract_id[:8]}-{schema_obj.name or f'schema{idx}'}",
-                )
-            except Exception as e:
-                logger.exception(
-                    "Failed to submit DQX validation run for contract %s schema_index=%d (%s)",
-                    contract_id, idx, schema_obj.name,
-                )
-                failures.append({
-                    'schema_index': idx,
-                    'schema_name': schema_obj.name,
-                    'error': f"{type(e).__name__}: {e}",
-                })
-                continue
-            runs.append({
-                'schema_index': idx,
-                'schema_name': schema_obj.name,
-                'physical_name': schema_obj.physical_name,
-                'run_id': run_id,
-                'monitor_url': f"{host}/jobs/runs/{run_id}" if host else None,
-            })
-
-        # If every submission failed, surface a 500 — partial success is reported
-        # via the failures list so the UI can show which schemas didn't submit.
-        if runs == [] and failures:
-            raise HTTPException(
-                status_code=500,
-                detail=f"All {len(failures)} DQX submissions failed; first error: {failures[0]['error']}",
+        try:
+            run_id = jobs_manager.submit_workflow(
+                'dqx_contract_validation',
+                job_parameters={
+                    'contract_id': contract_id,
+                    'ontos_base_url': ontos_base_url,
+                    'pipeline_id': body.pipeline_id,
+                    'write_quarantine': 'true' if body.write_quarantine else 'false',
+                    # Run-As auth (default): the job exchanges its OWN Run-As identity for an
+                    # app-audience OAuth token (no shared secret). app_client_id is the
+                    # audience — the app's own oauth client id (DATABRICKS_CLIENT_ID). The
+                    # SP-secret fields below are the fallback if the exchange fails. We pass
+                    # secret scope+key NAMES (not values) — secret-ref substitution doesn't
+                    # cascade through {{job.parameters.foo}}.
+                    'auth_mode': 'run_as',
+                    'app_client_id': settings.DATABRICKS_CLIENT_ID or '',
+                    'databricks_host': host.removeprefix('https://').removeprefix('http://') if host else '',
+                    'secrets_scope': settings.APP_SECRETS_SCOPE,
+                    'client_id_key': settings.APP_SECRETS_CLIENT_ID_KEY,
+                    'client_secret_key': settings.APP_SECRETS_CLIENT_SECRET_KEY,
+                },
+                run_name_suffix=contract_id[:8],
             )
+        except Exception as e:
+            logger.exception("Failed to submit DQX validation run for contract %s", contract_id)
+            raise HTTPException(status_code=500, detail=f"DQX submission failed: {type(e).__name__}: {e}")
 
+        monitor_url = f"{host}/jobs/runs/{run_id}" if host else None
         return {
             'workflow_id': 'dqx_contract_validation',
             'contract_id': contract_id,
             'ontos_base_url': ontos_base_url,
-            'runs': runs,
-            'failures': failures,
-            # Legacy single-run fields for any pre-existing UI integrations.
-            # When multiple schemas are submitted these reflect the first run.
-            'run_id': runs[0]['run_id'] if runs else None,
-            'monitor_url': runs[0]['monitor_url'] if runs else None,
+            # One run validates every schema in the contract now.
+            'runs': [{'run_id': run_id, 'monitor_url': monitor_url}],
+            'failures': [],
+            'run_id': run_id,
+            'monitor_url': monitor_url,
         }
     finally:
         inflight.discard(contract_id)
