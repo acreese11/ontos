@@ -16,7 +16,9 @@ Updated 2026-06-17. Legend: ✅ done · ⏳ in progress · ⚠️ blocked · ❌
    Maintain talk tracks carry the DQX-native story (0.15 + #1191 + "contract is the ruleset");
    Author got one light line. Doc reorg (#52) + tracker consolidation done. Independent review
    on record (2 blockers fixed). *Remaining non-talk-track docs PRs (#31/#45/#43) stay deferred.*
-2. **DQX execution as a notebook + troubleshoot the 100% `aws-dais` failure.** ⬅️ **NEXT** (the big build)
+2. **DQX execution as a notebook + troubleshoot the 100% `aws-dais` failure.** 🟢 **CODE-COMPLETE**
+   (validation pending redeploy). Job reworked to a `notebook_task`; root cause confirmed +
+   fixed. Details below. ⬅️ *needs redeploy + a live re-run to confirm.*
 3. **Ask-Ontos draft persistence.** ❌ (after #2)
 4. **Redeploy** FE + free apps. ❌ Last / as-needed for remote testing.
 
@@ -27,21 +29,35 @@ warehouse fix; the non-talk-track docs PRs (#31 / #45 / #43 — leave open, trac
 
 ## 🔴 Big priorities (detail)
 
-1. **DQX execution as a NOTEBOOK** — rework the DQX Contract Validation job to run as a
-   notebook so the demo audience can *see what's happening* inside (the last run took ~1 min
-   with no visibility). Goal: step-by-step, observable execution (pull contract → generate DQX
-   rules → apply checks → split good/bad → post results) with displayed intermediate output.
-   Currently a `spark_python_task`
-   (`src/backend/src/workflows/dqx_contract_validation/dqx_contract_validation.py`).
-   *Open: notebook format (`.py` `# COMMAND` cells vs `.ipynb`); replace vs supplement the job.*
-2. **Troubleshoot 100% DQX failure on `aws-dais`** — the last DQX run on the FE/dais workspace
-   reported **100% failure**. Prime suspects (the notebook's per-check visibility will confirm):
-   - **Stale synthetic data vs `position_freshness`** — seed data generated ~2026-05-28; the
-     freshness rule checks `ts_utc` within 60s of now → every row fails on a later run.
-   - **Schema drift vs `has_valid_schema`** — deployed `adsb_v2` drifted from the contract
-     (extra cols `arr_iata`/`category`/`dep_iata`; `ts_utc`/`last_contact_utc` date→timestamp;
-     `icao24`/`lat`/`lon` required→nullable) → strict schema validation fails the run.
-   - Also rule-out: rule mis-targeting, auth/grants, the rule-gen path.
+### 1. DQX execution as a NOTEBOOK — 🟢 code-complete (PR pending)
+Reworked `dqx_contract_validation` from a `spark_python_task` to a **`notebook_task`**
+(`.py` `# COMMAND`-cell notebook source). Decisions (Alan): **replace** the task; format
+**.py # COMMAND**. Self-contained via a `%pip install databricks-labs-dqx>=0.15.0` cell
+(visible on screen). Each of the 6 steps `display()`s its work; the **errors-vs-warnings
+per-check breakdown** cell is the money shot. App-side: `jobs_manager.submit_workflow` now
+resolves `{{job.parameters.NAME}}` into `notebook_task.base_parameters` too (jobs.submit has
+no server-side job-param substitution) — unit-tested. The Run-DQX trigger is unchanged
+(already passes job-level params). Deploy imports the `.py` as a notebook via
+`ImportFormat.AUTO` + the `# Databricks notebook source` header → path resolves.
+**Pending:** redeploy + a live re-run to confirm the notebook path + deps + a clean result.
+
+### 2. 100% `aws-dais` failure — ✅ ROOT-CAUSED (run 1077521786352682, contract `live_flights`)
+The run **succeeded**; "100% failure" was the *quality result*: `pass=0 fail=11850 score=0%`.
+Evidence from the quarantine table (latest run): **`with_errors=24`, `with_warnings=11850`**;
+the all-rows warning is **`position_freshness`** (n=11850). Live data is ~2 days old
+(`fresh_rows_within_60s = 0`). The 05-28 runs quarantined exactly **24** (the 24 genuinely
+negative-altitude rows `alt_baro_positive` catches → 99.80%).
+- **Real bug:** the job used `apply_checks_by_metadata_and_split` → `bad_df` for *both*
+  quarantine and the score; `bad_df` includes rows flagged by **any** check (error *or*
+  warning). So a `warning`-level rule (freshness) firing on stale data quarantined 100% of
+  rows. Latent since 05-28 (data was fresh then); exposed by aging, **not** a code regression.
+- **Fix (shipped in the notebook):** annotate with `apply_checks_by_metadata`, then drive
+  **score + quarantine off errors only**; surface warnings as a separate count/breakdown.
+  Restores the intended 99.80% / 24-quarantined.
+- **Not the cause** (ruled out): schema-validation type drift — `strict_schema_validation=False`
+  tolerates the extra cols + the `date→timestamp`/`int→bigint` differences here.
+- **Demo handling (Alan):** ship the job fix; let the freshness *warning* show (static feed
+  is always >60s old). The warning no longer fails the data.
 
 ---
 
