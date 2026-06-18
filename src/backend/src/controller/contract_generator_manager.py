@@ -24,6 +24,7 @@ from databricks.sdk.service.sql import StatementState
 from src.common.config import Settings
 from src.common.llm_client import create_openai_client, chat_completion, stream_chat_completion
 from src.common.dqx_catalog import CHECK_CATALOG, build_implementation, to_criticality, to_display
+from src.common.unity_catalog_utils import map_column_type_to_logical_type
 from src.common.logging import get_logger
 
 logger = get_logger(__name__)
@@ -176,6 +177,7 @@ def _finalize_contract(
     schema: str,
     table: str,
     warnings: List[str],
+    inspected_columns: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """Apply conservative defaults + defensive normalization to a parsed contract.
 
@@ -245,6 +247,30 @@ def _finalize_contract(
             srv["catalog"] = catalog
             srv["schema"] = schema
     contract["servers"] = servers
+
+    # Deterministically set each column's logicalType (and physicalType) from the INSPECTED
+    # UC type, using the same mapping source-conformance applies to the live table. The LLM
+    # only picks from a scalar vocabulary (string/integer/number/boolean/date/timestamp) and
+    # mis-declares complex columns (array/struct/map) as 'string'. Deriving from the live type
+    # guarantees a fresh contract matches its table (no type-drift false positives) and types
+    # array→array, struct/map→object correctly. Only touches the object mapped to the inspected
+    # table (matched by physicalName); other schema objects (other tables) are left alone.
+    if inspected_columns:
+        target_fqn = f"{catalog}.{schema}.{table}"
+        by_name = {
+            (c.get("name") or "").strip().lower(): c
+            for c in inspected_columns if c.get("name")
+        }
+        for sch in contract.get("schema", []):
+            if sch.get("physicalName") != target_fqn:
+                continue
+            for prop in (sch.get("properties") or []):
+                col = by_name.get((prop.get("name") or "").strip().lower())
+                if not col:
+                    continue
+                prop["logicalType"] = map_column_type_to_logical_type(col.get("type_name") or None)
+                if col.get("type_text"):
+                    prop["physicalType"] = col["type_text"]
 
     # Force AI-draft markers on customProperties.
     cps = contract.get("customProperties") or []
@@ -596,7 +622,7 @@ class ContractGeneratorManager:
         except Exception as e:
             raise RuntimeError(f"Failed to parse LLM output as JSON: {e}\nFirst 500 chars:\n{content[:500]}")
 
-        _finalize_contract(contract, catalog=catalog, schema=schema, table=table, warnings=warnings)
+        _finalize_contract(contract, catalog=catalog, schema=schema, table=table, warnings=warnings, inspected_columns=columns)
 
         duration = time.time() - t0
         steps[-1]["duration_s"] = duration
@@ -835,7 +861,7 @@ class ContractGeneratorManager:
             yield {"type": "error",
                    "message": f"Failed to parse LLM output as JSON: {e}"}
             return
-        _finalize_contract(contract, catalog=catalog, schema=schema, table=table, warnings=warnings)
+        _finalize_contract(contract, catalog=catalog, schema=schema, table=table, warnings=warnings, inspected_columns=columns)
         yield {"type": "stage", "step": "parse_validate", "status": "done"}
 
         # Persist (best-effort — surface the contract even if save fails).
