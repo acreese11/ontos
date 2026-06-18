@@ -125,28 +125,27 @@ class WorkspaceDeployer:
             with open(local_path, 'rb') as f:
                 content = f.read()
 
-            # A .py file whose first line is the notebook magic header must be
-            # imported with format=SOURCE so the workspace creates a NOTEBOOK that a
-            # notebook_task can run. ImportFormat.AUTO imports it as a plain FILE
-            # (verified), which a notebook_task can't execute. A notebook lands at
-            # the path WITHOUT the source extension, so strip it. Plain .py modules
-            # (no header, used by spark_python_task) and non-.py files stay AUTO.
-            is_notebook_source = False
-            if local_path.suffix == '.py':
-                first_line = content.split(b'\n', 1)[0].strip()
-                if first_line == b'# Databricks notebook source':
-                    is_notebook_source = True
+            # A file whose first line is the notebook magic header must be imported with
+            # format=SOURCE so the workspace creates a NOTEBOOK a notebook_task can run.
+            # ImportFormat.AUTO imports it as a plain FILE (verified), which a notebook_task
+            # can't execute. Detect by CONTENT, regardless of extension: the bundle deploy
+            # already imports a notebook .py WITHOUT the .py extension, so the app container's
+            # copy is `dqx_contract_validation` (no suffix) — a suffix-only check misses it and
+            # it imports as a FILE. Plain .py modules (no header, used by spark_python_task)
+            # and non-notebook files stay AUTO.
+            is_notebook_source = content.split(b'\n', 1)[0].strip() == b'# Databricks notebook source'
 
             encoded_content = base64.b64encode(content).decode('utf-8')
 
             if is_notebook_source:
-                notebook_path = workspace_path[:-3]  # drop ".py" → notebook path
+                # Notebooks live at the path WITHOUT a source extension; strip .py if present.
+                notebook_path = workspace_path[:-3] if workspace_path.endswith('.py') else workspace_path
                 # import(overwrite=True) over an existing FILE keeps it a FILE — it does
                 # NOT convert it to a NOTEBOOK. Older AUTO-based deploys left a FILE at this
                 # path (and a stale .py at the un-stripped path), so a notebook_task then
                 # fails with "... is not a notebook". Delete both first so SOURCE import
                 # creates a clean NOTEBOOK.
-                for stale in (notebook_path, workspace_path):
+                for stale in {notebook_path, workspace_path}:
                     try:
                         self._client.workspace.delete(stale)
                     except Exception:
