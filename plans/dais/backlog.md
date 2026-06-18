@@ -24,8 +24,13 @@ Updated 2026-06-17. Legend: ✅ done · ⏳ in progress · ⚠️ blocked · ❌
    `llm_sessions`; verified end-to-end via the API (create + continue, no fork).
 4. **Contract↔UC linkage (Q1, Alan 2026-06-18).** ✅ **DONE** (#57) — generator forces the full
    3-level UC `physicalName`; UC Catalog Explorer clickthrough in the contract details view.
-5. **Redeploy** FE + free apps. ⏳ **IN PROGRESS** — makes all of the above live + gives the
-   DQX/auth wiring its final end-to-end confirmation through the Run-DQX button.
+5. **Redeploy** FE + free apps. ✅ **DONE** (2026-06-18) — both apps RUNNING with all of the
+   above. Run-DQX confirmed end-to-end on FE (app's own deployer → NOTEBOOK → Run-As auth →
+   ~99.80%). Two deploy-time bugs found + fixed in the process:
+   - **#60** — deployer imported the notebook as a FILE (the bundle strips the `.py`, so the
+     suffix-based check missed it); now detects notebook source by header content. Validated.
+   - **#61** — copilot draft turns weren't persisting when the ~90s stream was interrupted
+     (the session was flushed, not committed until request-end); now commits up front.
 
 Deferred (revisit, do **not** start without Alan's go): show-all-quality-rules; test-check
 warehouse fix; the non-talk-track docs PRs (#31 / #45 / #43 — leave open, tracked below).
@@ -90,6 +95,10 @@ negative-altitude rows `alt_baro_positive` catches → 99.80%).
 - **Ask-Ontos draft persistence (#55)** — copilot draft turns land in `llm_sessions`.
 - **Contract↔UC linkage (#57)** — full 3-level `physicalName` on AI drafts + UC Catalog
   Explorer clickthrough.
+- **Deploy hardening (#59/#60)** — deployer imports notebook-source `.py` as a NOTEBOOK
+  (header-content detection, delete-before-import); FE + free-edition redeployed + validated.
+- **Ask-Ontos persistence durability (#61)** — commit the draft session up front so an
+  interrupted ~90s stream still records the turn.
 - **Doc reorg (#52)** — fork/demo planning under `plans/dais/`, design/analysis under `docs/dais/`;
   two trackers consolidated into this one (`plans/dais/backlog.md`).
 - **Earlier** — live-run bug fixes (#12); Compliance/Contract Coverage (#16/#18); deck pulled +
