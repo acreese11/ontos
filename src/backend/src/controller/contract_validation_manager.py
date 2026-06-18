@@ -232,22 +232,16 @@ class ContractValidationManager:
                         "live_type": l_type or None,
                     },
                 })
-            if dcol["required"] != lcol["required"]:
-                findings.append({
-                    "kind": "nullability_change",
-                    "message": (
-                        f"{object_name}: column '{dcol['name']}' nullability changed "
-                        f"(contract {'required' if dcol['required'] else 'nullable'} → "
-                        f"table {'required' if lcol['required'] else 'nullable'})"
-                    ),
-                    "details": {
-                        "object": object_name,
-                        "physical_name": physical_name,
-                        "column": dcol["name"],
-                        "declared_required": dcol["required"],
-                        "live_required": lcol["required"],
-                    },
-                })
+            # NOTE: nullability is intentionally NOT a schema-drift dimension. ODCS
+            # `required` is a QUALITY assertion ("data must not be null") enforced by DQX
+            # (is_not_null), not a physical-schema property. UC/Delta columns are nullable by
+            # default (NOT NULL constraints are rare), so comparing contract-`required` to
+            # table-nullability flagged EVERY required column as "required → nullable" — a
+            # false positive on every contract that drowned the real structural drift
+            # (missing/extra columns, type changes). Nullability conformance belongs to the
+            # DQX quality run, not source-conformance. (If a "table is stricter than the
+            # contract" signal is ever wanted, flag only `lcol["required"] and not
+            # dcol["required"]` — the rare, non-noisy direction.)
 
         return findings
 
