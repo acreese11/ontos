@@ -99,6 +99,15 @@ negative-altitude rows `alt_baro_positive` catches → 99.80%).
   (header-content detection, delete-before-import); FE + free-edition redeployed + validated.
 - **Ask-Ontos persistence durability (#61)** — commit the draft session up front so an
   interrupted ~90s stream still records the turn.
+- **Source-conformance / drift cleanup (#63/#64/#65)** — was ~100% failure on healthy
+  contracts. Dropped nullability from drift (it's a DQX quality assertion, not physical
+  schema); generator now derives logicalType from the inspected UC type (no type-drift,
+  array/struct→array/object) and declares EVERY inspected column (no spurious extra-column
+  drift). A freshly generated contract now shows zero drift against its own table.
+- **Run-As token-exchange audience (#66)** — was silently falling back to SP M2M: the route
+  passed `DATABRICKS_CLIENT_ID` (the app's runtime SP) as the exchange audience instead of
+  the app's `oauth2_app_client_id`. Now resolved via `apps.get`; confirmed live (audience
+  `af1a4533…`, run SUCCESS via the real Run-As path). Both apps redeployed with #63–#66.
 - **Doc reorg (#52)** — fork/demo planning under `plans/dais/`, design/analysis under `docs/dais/`;
   two trackers consolidated into this one (`plans/dais/backlog.md`).
 - **Earlier** — live-run bug fixes (#12); Compliance/Contract Coverage (#16/#18); deck pulled +
