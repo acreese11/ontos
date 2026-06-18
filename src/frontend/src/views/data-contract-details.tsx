@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import { AlertCircle, Download, Pencil, Trash2, Loader2, ArrowLeft, FileText, KeyRound, CopyPlus, Plus, Shapes, Columns2, Database, Sparkles, Package, ChevronLeft, ChevronRight, ShieldCheck, Globe, Link2, PlayCircle, Eye, ChevronDown, Copy } from 'lucide-react'
+import { AlertCircle, Download, Pencil, Trash2, Loader2, ArrowLeft, FileText, KeyRound, CopyPlus, Plus, Shapes, Columns2, Database, Sparkles, Package, ChevronLeft, ChevronRight, ShieldCheck, Globe, Link2, PlayCircle, Eye, ChevronDown, Copy, ExternalLink } from 'lucide-react'
 import { DetailViewSkeleton } from '@/components/common/list-view-skeleton'
 import { Badge } from '@/components/ui/badge'
 import { Label } from '@/components/ui/label'
@@ -253,6 +253,8 @@ export default function DataContractDetails() {
   const [pendingUpdate, setPendingUpdate] = useState<any>(null)
   const [links, setLinks] = useState<EntitySemanticLink[]>([])
   const [selectedSchemaIndex, setSelectedSchemaIndex] = useState(0)
+  // Workspace URL (DATABRICKS_HOST) for deep-linking a UC physicalName to Catalog Explorer.
+  const [workspaceUrl, setWorkspaceUrl] = useState<string | null>(null)
   const [schemaLinks, setSchemaLinks] = useState<Record<string, EntitySemanticLink[]>>({})
   const [propertyLinks] = useState<Record<string, EntitySemanticLink[]>>({})
 
@@ -687,6 +689,28 @@ export default function DataContractDetails() {
       fetchUserInfo()
     }
   }, [userInfo, fetchUserInfo])
+
+  // Fetch the workspace URL once, for the UC Catalog Explorer clickthrough.
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const ws = await get<Array<{ url?: string | null }>>('/api/workspace/accessible-workspaces')
+        if (!cancelled && Array.isArray(ws) && ws[0]?.url) setWorkspaceUrl(ws[0].url)
+      } catch {
+        // non-fatal: the UC clickthrough just won't render
+      }
+    })()
+    return () => { cancelled = true }
+  }, [get])
+
+  // Deep link to the actual UC table in Catalog Explorer — only when the physicalName is a
+  // genuine 3-level UC name (non-UC sources keep just the in-app Catalog Commander link).
+  const ucExplorerHref = (pn?: string | null): string | null => {
+    if (!workspaceUrl || !pn || pn.split('.').length !== 3) return null
+    const [cat, sch, tbl] = pn.split('.')
+    return `${workspaceUrl.replace(/\/$/, '')}/explore/data/${cat}/${sch}/${tbl}`
+  }
 
   // Set default view mode only if no stored preference exists
   useEffect(() => {
@@ -2304,6 +2328,18 @@ export default function DataContractDetails() {
                         {contract.schema[0].physicalName}
                       </a>
                     )}
+                    {ucExplorerHref(contract.schema[0].physicalName) && (
+                      <a
+                        href={ucExplorerHref(contract.schema[0].physicalName)!}
+                        className="flex items-center gap-1.5 text-sm text-primary hover:underline"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title="Open the table in Unity Catalog Explorer"
+                      >
+                        <ExternalLink className="h-4 w-4" />
+                        Unity Catalog
+                      </a>
+                    )}
                     {canEditInPlace && (
                       <>
                         <Button size="sm" variant="ghost" disabled={loadingEditProperties} onClick={() => handleEditSchema(0)}>
@@ -2446,6 +2482,18 @@ export default function DataContractDetails() {
                         >
                           <Database className="h-4 w-4" />
                           {contract.schema[selectedSchemaIndex].physicalName}
+                        </a>
+                      )}
+                      {ucExplorerHref(contract.schema[selectedSchemaIndex]?.physicalName) && (
+                        <a
+                          href={ucExplorerHref(contract.schema[selectedSchemaIndex].physicalName)!}
+                          className="flex items-center gap-1.5 text-sm text-primary hover:underline"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          title="Open the table in Unity Catalog Explorer"
+                        >
+                          <ExternalLink className="h-4 w-4" />
+                          Unity Catalog
                         </a>
                       )}
                       {canEditInPlace && (
@@ -2596,6 +2644,18 @@ export default function DataContractDetails() {
                         >
                           <Database className="h-4 w-4" />
                           {contract.schema[selectedSchemaIndex].physicalName}
+                        </a>
+                      )}
+                      {ucExplorerHref(contract.schema[selectedSchemaIndex]?.physicalName) && (
+                        <a
+                          href={ucExplorerHref(contract.schema[selectedSchemaIndex].physicalName)!}
+                          className="flex items-center gap-1.5 text-sm text-primary hover:underline"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          title="Open the table in Unity Catalog Explorer"
+                        >
+                          <ExternalLink className="h-4 w-4" />
+                          Unity Catalog
                         </a>
                       )}
                       {canEditInPlace && (

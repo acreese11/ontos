@@ -213,6 +213,34 @@ def _finalize_contract(
         if isinstance(props, list):
             sch["properties"] = [p for p in props if isinstance(p, dict)]
 
+    # The generator KNOWS the real UC location (it was the input) — don't trust the
+    # LLM to spell physicalName; it routinely emits just the table name. Force the
+    # full 3-level catalog.schema.table so the contract links to the actual UC asset
+    # and downstream jobs (DQX validation requires catalog.schema.table) resolve it.
+    # A single-table draft → every schema is THIS table; for the rare multi-schema
+    # emission, qualify each leaf with the source catalog.schema.
+    _schemas = contract.get("schema", [])
+    for sch in _schemas:
+        if len(_schemas) == 1:
+            leaf = table
+        else:
+            existing = (sch.get("physicalName") or sch.get("name") or table)
+            leaf = existing.split(".")[-1] or table
+        sch["physicalName"] = f"{catalog}.{schema}.{leaf}"
+        sch.setdefault("physicalType", "table")
+
+    # Ensure the server records the real catalog/schema (powers the UC clickthrough
+    # and keeps the ODCS server block consistent with the forced physicalNames).
+    servers = contract.get("servers")
+    if not isinstance(servers, list) or not servers:
+        servers = [{"server": "databricks", "type": "databricks"}]
+    for srv in servers:
+        if isinstance(srv, dict):
+            srv.setdefault("type", "databricks")
+            srv["catalog"] = catalog
+            srv["schema"] = schema
+    contract["servers"] = servers
+
     # Force AI-draft markers on customProperties.
     cps = contract.get("customProperties") or []
     if not any(cp.get("property") == "generatedBy" for cp in cps):
