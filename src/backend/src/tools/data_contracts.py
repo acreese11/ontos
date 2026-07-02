@@ -746,7 +746,8 @@ class SearchDataContractsTool(BaseTool):
         }
     }
     required_params = ["query"]
-    
+    required_scope = "contracts:read"
+
     async def execute(
         self,
         ctx: ToolContext,
@@ -822,7 +823,8 @@ class GetDataContractTool(BaseTool):
         }
     }
     required_params = ["contract_id"]
-    
+    required_scope = "contracts:read"
+
     async def execute(self, ctx: ToolContext, contract_id: str) -> ToolResult:
         """Get a data contract by ID."""
         logger.info(f"[get_data_contract] Starting - contract_id={contract_id}")
@@ -947,7 +949,11 @@ class DeleteDataContractTool(BaseTool):
         }
     }
     required_params = ["contract_id"]
-    
+    # Distinct from "contracts:write" (create/update/generate) so identity-path
+    # auth can gate delete at ADMIN while standard writes stay at READ_WRITE.
+    # See docs/notes/MCP_AUTH_REWORK_PRD.md §4.1.
+    required_scope = "contracts:delete"
+
     async def execute(self, ctx: ToolContext, contract_id: str) -> ToolResult:
         """Delete a data contract."""
         logger.info(f"[delete_data_contract] Starting - contract_id={contract_id}")
