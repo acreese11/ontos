@@ -246,6 +246,14 @@ lights up here. (demo-3 already flags "use the same consumer identity.")
    (`data_contract_sla_properties`: freshness/volume/etc.). App. C.
 7. **→ demo-3 (Discover):** scope **using "Ask Ontos" for *discovery*** into the Discovery demo
    (per Alan, 2026-06-15). *(Action lives in `demo-3-discover-marketplace-subscribe.md`.)*
+8. **Full metadata sync / drift detection** (next priority) — extend Beat-2 drift detection beyond
+   *structural* schema (columns / types / nullability) to **full metadata conformance**: column &
+   table **tags** (incl. governance/classification tags like `pii`), **descriptions / comments**,
+   and other UC metadata the contract declares. A silent tag or description change is a governance
+   break the contract can't currently see. Land as new `check_type`s (e.g. `tag_drift`,
+   `description_drift`) so the schema-drift count stays clean, reusing the same diff loop + trust-loop
+   fan-out. See **Appendix B — Stretch** for scope. *(Not built; agreed as a next priority,
+   2026-06-17.)*
 
 ---
 
@@ -395,6 +403,23 @@ against the *live* Unity Catalog table and surfaces drift in the UI:
 ## Stretch (noted, not built)
 Map drift findings to the contract's **SLA properties** alongside the Lakehouse statistical layer
 (App. C) so schema + freshness + volume conformance read from one place.
+
+**Full metadata sync / drift detection (next priority, agreed 2026-06-17).** Today `_diff_object`
+compares only the *structural* shape — column presence, type, and nullability (`missing_column`,
+`extra_column`, `type_change`, `nullability_change`, all `check_type=schema_drift`). It does **not**
+compare governance/descriptive metadata. Extend it to a full metadata conformance check:
+- **Tags** — column- and table-level UC tags, including classification tags (`pii`, retention,
+  domain/data-product tags). A dropped `pii` tag or a flipped domain tag is a silent governance break
+  the contract can't see today, yet tags are exactly what Ontos uses to group assets into Data
+  Products and drive persona visibility.
+- **Descriptions / comments** — column and table comments declared in the contract vs the live table.
+- **Other declared UC metadata** the contract carries (e.g. table properties) as scope allows.
+
+Implementation shape: UC already exposes tags/comments via `DatabricksConnector.get_asset_metadata`
+(the same call the schema diff uses), so this is a contained extension of the existing diff loop —
+emit new `check_type`s (`tag_drift`, `description_drift`, …) rather than overloading `schema_drift`,
+so the schema-drift finding count stays meaningful, and reuse the existing `_notify_drift` trust-loop
+fan-out (owner + subscribers). Net-new code + tests, not a demo-week change.
 
 ## Reset between takes
 Re-run freely (latest run is shown). Reset the *staged* drift (reverse the `ALTER`s / re-seed) to
