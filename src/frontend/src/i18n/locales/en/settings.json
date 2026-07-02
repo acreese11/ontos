@@ -368,14 +368,14 @@
     }
   },
   "mcpTokens": {
-    "title": "MCP API Tokens",
-    "description": "Manage API tokens for AI assistant integrations via the Model Context Protocol",
+    "title": "MCP Service Principal Tokens",
+    "description": "Manage API tokens for service-principal / machine-to-machine MCP integrations (scheduled jobs, external automations). Most AI assistants - including Genie One - don't need a token at all: they authenticate as the signed-in user and only see the tools that user's Ontos role already grants.",
     "refresh": "Refresh",
     "createToken": "Create Token",
     "showRevokedTokens": "Show revoked tokens",
     "emptyState": {
-      "title": "No MCP tokens yet",
-      "description": "Create a token to allow AI assistants to access your tools"
+      "title": "No service-principal tokens yet",
+      "description": "Create a token only for automations with no human to act on behalf of. Human users get MCP access automatically via their Ontos permissions - no token needed."
     },
     "table": {
       "name": "Name",
@@ -398,14 +398,14 @@
       "revokeToken": "Revoke token"
     },
     "info": {
-      "title": "Using MCP Tokens",
-      "description": "MCP tokens allow AI assistants to interact with your data governance platform. Each token has specific scopes that control which tools can be accessed.",
+      "title": "Using MCP Service Principal Tokens",
+      "description": "Service-principal tokens are for automations with no human to act on behalf of. They cannot be used behind a Unity Catalog HTTP connection (only direct/bespoke HTTP callers) - for Genie One, Genie Code, or any UC-connection-based integration, use forwarded-identity auth instead, which requires no token and is scoped to the connecting user's real Ontos permissions automatically.",
       "endpoint": "Endpoint:",
       "header": "Header:"
     },
     "createDialog": {
-      "title": "Create MCP Token",
-      "description": "Create a new API token for AI assistant integrations. The token will only be shown once.",
+      "title": "Create Service Principal Token",
+      "description": "Create a new API token for a service-principal / machine-to-machine integration with no human to act on behalf of. The token will only be shown once. Human users should not use tokens - they get MCP access automatically via their Ontos permissions.",
       "tokenName": "Token Name",
       "tokenNamePlaceholder": "e.g., Claude Assistant - Analytics Team",
       "tokenNameHelp": "A descriptive name to identify this token",

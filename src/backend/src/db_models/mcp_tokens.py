@@ -29,9 +29,22 @@ class MCPTokenDb(Base):
         last_used_at: When the token was last used for authentication
         expires_at: When the token expires (null for no expiration)
         is_active: Whether the token is active (can be revoked)
+
+    Note: mcp_tokens are for service-principal/M2M callers only (enforced at
+    the API layer, see routes/mcp_tokens_routes.py). There is no
+    `is_service_principal` column here - every existing row predates the
+    identity-based auth rework and is therefore M2M by definition, so the
+    value is currently constant and is surfaced as a hardcoded True in the
+    API models instead (see models/mcp_tokens.py) rather than persisted.
+    This means the DB currently has no way to distinguish a pre-rework
+    human-issued token from a genuine M2M one - if that distinction ever
+    matters (e.g. to selectively revoke old human tokens), a real
+    `is_service_principal` column and backfill migration will be needed;
+    see docs/notes/MCP_AUTH_REWORK_PRD.md §7 (rollout plan) and
+    MCP_AUTH_REWORK_EXECUTION_PLAN.md Phase 3.
     """
     __tablename__ = "mcp_tokens"
-    
+
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
     name = Column(String(255), nullable=False)
     token_hash = Column(String(255), nullable=False, unique=True, index=True)

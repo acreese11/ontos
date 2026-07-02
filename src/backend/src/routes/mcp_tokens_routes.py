@@ -10,11 +10,11 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
-from src.common.authorization import PermissionChecker
+from src.common.authorization import require_ontos_admin
 from src.common.dependencies import CurrentUserDep, DBSessionDep, AuditManagerDep, AuditCurrentUserDep
-from src.common.features import FeatureAccessLevel
 from src.common.logging import get_logger
 from src.controller.mcp_tokens_manager import MCPTokensManager
+from src.models.users import UserInfo
 from src.models.mcp_tokens import (
     MCPTokenCreate,
     MCPTokenInfo,
@@ -32,8 +32,11 @@ def register_routes(app):
     app.include_router(router)
 
 
-# Require admin access for token management
-require_admin = PermissionChecker(feature_id="settings", required_level=FeatureAccessLevel.READ_WRITE)
+# Require Ontos admin (is_admin=True role membership) for token management.
+# NOT settings:READ_WRITE - that would let any user with Settings write access
+# mint/manage MCP tokens with arbitrary scopes. Ported from upstream fix
+# databrickslabs/ontos#404/#458 (see common/authorization.require_ontos_admin).
+require_admin = require_ontos_admin
 
 
 @router.post(
@@ -49,26 +52,41 @@ async def create_mcp_token(
     current_user: AuditCurrentUserDep,
     db: DBSessionDep,
     audit_manager: AuditManagerDep,
-    _: bool = Depends(require_admin)
+    _: UserInfo = Depends(require_admin)
 ):
-    """Create a new MCP API token."""
+    """Create a new MCP API token.
+
+    is_service_principal must be true - mcp_tokens are for service-principal/
+    M2M callers only. Human callers should use forwarded-identity (OBO) auth
+    instead (see docs/notes/MCP_AUTH_REWORK_PRD.md).
+    """
     logger.info(f"Creating MCP token: name='{token_data.name}', scopes={token_data.scopes}")
-    
+
+    if not token_data.is_service_principal:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "mcp_tokens are for service-principal/M2M callers only. "
+                "Human callers should use forwarded-identity (OBO) auth instead."
+            ),
+        )
+
     # Get current user email
     created_by = current_user.email if current_user else None
-    
+
     manager = MCPTokensManager(db=db)
-    
+
     try:
         generated = manager.generate_token(
             name=token_data.name,
             scopes=token_data.scopes,
             created_by=created_by,
-            expires_days=token_data.expires_days
+            expires_days=token_data.expires_days,
+            is_service_principal=token_data.is_service_principal,
         )
-        
+
         db.commit()
-        
+
         audit_manager.log_action(
             db=db,
             username=current_user.username if current_user else 'unknown',
@@ -82,18 +100,21 @@ async def create_mcp_token(
                 'scopes': generated.scopes
             }
         )
-        
+
         logger.info(f"Created MCP token: id={generated.id}, name='{generated.name}'")
-        
+
         return MCPTokenResponse(
             id=generated.id,
             name=generated.name,
             token=generated.token,
             scopes=generated.scopes,
+            is_service_principal=generated.is_service_principal,
             created_at=generated.created_at,
             expires_at=generated.expires_at
         )
-        
+
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error creating MCP token: {e}", exc_info=True)
         db.rollback()
@@ -113,7 +134,7 @@ async def list_mcp_tokens(
     request: Request,
     db: DBSessionDep,
     include_inactive: bool = False,
-    _: bool = Depends(require_admin)
+    _: UserInfo = Depends(require_admin)
 ):
     """List all MCP API tokens."""
     logger.debug(f"Listing MCP tokens (include_inactive={include_inactive})")
@@ -127,6 +148,8 @@ async def list_mcp_tokens(
             id=t.id,
             name=t.name,
             scopes=t.scopes or [],
+            # Not a DB column - always True, see db_models/mcp_tokens.py
+            is_service_principal=True,
             created_by=t.created_by,
             created_at=t.created_at,
             last_used_at=t.last_used_at,
@@ -149,7 +172,7 @@ async def list_mcp_tokens(
 async def get_mcp_token(
     token_id: UUID,
     db: DBSessionDep,
-    _: bool = Depends(require_admin)
+    _: UserInfo = Depends(require_admin)
 ):
     """Get information about a specific MCP token."""
     manager = MCPTokensManager(db=db)
@@ -166,6 +189,8 @@ async def get_mcp_token(
         id=token.id,
         name=token.name,
         scopes=token.scopes or [],
+        # Not a DB column - always True, see db_models/mcp_tokens.py
+        is_service_principal=True,
         created_by=token.created_by,
         created_at=token.created_at,
         last_used_at=token.last_used_at,
@@ -187,7 +212,7 @@ async def revoke_mcp_token(
     db: DBSessionDep,
     audit_manager: AuditManagerDep,
     current_user: AuditCurrentUserDep,
-    _: bool = Depends(require_admin)
+    _: UserInfo = Depends(require_admin)
 ):
     """Revoke an MCP API token."""
     logger.info(f"Revoking MCP token: id={token_id}")
@@ -233,7 +258,7 @@ async def delete_mcp_token(
     db: DBSessionDep,
     audit_manager: AuditManagerDep,
     current_user: AuditCurrentUserDep,
-    _: bool = Depends(require_admin)
+    _: UserInfo = Depends(require_admin)
 ):
     """Permanently delete an MCP API token."""
     logger.info(f"Deleting MCP token: id={token_id}")

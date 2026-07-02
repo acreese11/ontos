@@ -195,7 +195,14 @@ def test_no_auth(base: str, is_remote: bool, verbose: bool):
         result_warn("Skipped on remote endpoint (app-level auth intercepts first)")
         return
 
-    # No key at all
+    # No key at all. NOTE: if the local server has ENV=LOCAL or
+    # MOCK_USER_DETAILS=true, "no credentials" now resolves to the configured
+    # mock user via the identity-path auth (see routes/mcp_routes.py,
+    # resolve_identity_caller) - matching how every other route in the app
+    # already behaves locally. `ping` requires no scope either way, so a
+    # mock-identity server will legitimately return pong here instead of
+    # -32001. Treat that as expected, not a failure - only flag it as a real
+    # failure if the response is neither an auth error nor a successful pong.
     status, _, body = http_request(
         f"{base}/api/mcp", method="POST",
         body=jsonrpc_body("ping"),
@@ -205,10 +212,18 @@ def test_no_auth(base: str, is_remote: bool, verbose: bool):
 
     if data.get("error", {}).get("code") == -32001:
         result_ok("No API key → error -32001")
+    elif data.get("result", {}).get("pong") is True:
+        result_warn(
+            "No API key → authenticated as local mock identity (expected when "
+            "ENV=LOCAL/MOCK_USER_DETAILS=true); ping requires no scope so this "
+            "is not itself proof of a leak - see test_identity_scope_filtering"
+        )
     else:
-        result_fail("No API key", f"expected -32001, got {data}")
+        result_fail("No API key", f"expected -32001 or mock-identity pong, got {data}")
 
-    # Bad key
+    # Bad key: in mock-identity mode this also resolves to the mock user
+    # (identity-path auth doesn't inspect X-API-Key at all when it succeeds
+    # first), same caveat as above.
     status, _, body = http_request(
         f"{base}/api/mcp", method="POST",
         body=jsonrpc_body("ping"),
@@ -219,8 +234,10 @@ def test_no_auth(base: str, is_remote: bool, verbose: bool):
 
     if data.get("error", {}).get("code") == -32001:
         result_ok("Bad API key → error -32001")
+    elif data.get("result", {}).get("pong") is True:
+        result_warn("Bad API key → authenticated as local mock identity (expected in mock mode)")
     else:
-        result_fail("Bad API key", f"expected -32001, got {data}")
+        result_fail("Bad API key", f"expected -32001 or mock-identity pong, got {data}")
 
 
 def test_bad_json(base: str, token: str, verbose: bool):
@@ -312,6 +329,55 @@ def test_ping(base: str, token: str, session_id: Optional[str], verbose: bool):
         result_ok("timestamp present", result["timestamp"])
     else:
         result_warn("timestamp missing")
+
+
+# Tool-name prefixes with no entry in common/mcp_permissions.SCOPE_FEATURE_MAP
+# as of this writing. Identity-path (OBO) callers must never see these
+# regardless of which mock role/groups the local server is configured with -
+# unmapped scopes fail closed by design (see docs/notes/MCP_AUTH_REWORK_PRD.md
+# §4.1). Only "contracts:*"-scoped tools are currently mapped.
+_UNMAPPED_SCOPE_TOOL_PREFIXES = (
+    "list_catalogs", "get_catalog_details", "list_schemas",  # analytics:*
+    "search_glossary_terms", "add_semantic_link", "list_semantic_links",
+    "remove_semantic_link", "find_entities_by_concept", "execute_sparql_query",
+    "get_concept_hierarchy", "get_concept_neighbors",  # semantic:*, sparql:query
+    "get_current_user",  # user:read
+    "global_search",  # search:read
+)
+
+
+def test_identity_unmapped_scopes_denied(base: str, verbose: bool):
+    """Assert unmapped scopes never leak to an identity-path caller.
+
+    Sends a credential-free request. If the local server has ENV=LOCAL or
+    MOCK_USER_DETAILS=true, this resolves via the identity path to the
+    configured mock user (see resolve_identity_caller); if not, it's an auth
+    failure and this test is skipped (nothing to check). Either way, no tool
+    backed by an unmapped scope (analytics:*, semantic:*, user:read,
+    search:read, sparql:query) should ever appear - regardless of the mock
+    user's groups/role - since those scopes have no SCOPE_FEATURE_MAP entry
+    and must fail closed.
+    """
+    section("Identity Path – unmapped scopes fail closed")
+    status, _, body = http_request(
+        f"{base}/api/mcp", method="POST",
+        body=jsonrpc_body("tools/list", req_id=100),
+    )
+    data = safe_json(body) or {}
+    dump("response", data, verbose)
+
+    if data.get("error"):
+        result_warn("Skipped - no identity-path auth active on this server (credential-free request was rejected)")
+        return
+
+    tools = data.get("result", {}).get("tools", [])
+    tool_names = {t.get("name") for t in tools}
+    leaked = tool_names & set(_UNMAPPED_SCOPE_TOOL_PREFIXES)
+
+    if leaked:
+        result_fail("Unmapped-scope tools visible to identity caller", ", ".join(sorted(leaked)))
+    else:
+        result_ok(f"No unmapped-scope tools visible ({len(tools)} total tools returned)")
 
 
 def test_tools_list(base: str, token: str, session_id: Optional[str], verbose: bool) -> list:
@@ -609,6 +675,8 @@ def main():
         sys.exit(2)
 
     test_no_auth(base, is_remote, verbose)
+    if not is_remote:
+        test_identity_unmapped_scopes_denied(base, verbose)
     test_bad_json(base, token, verbose)
     test_invalid_session(base, token, verbose)
     session_id = test_initialize(base, token, verbose)

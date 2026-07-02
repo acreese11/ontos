@@ -27,13 +27,19 @@ TOKEN_BYTE_LENGTH = 32  # 256 bits of entropy
 
 @dataclass
 class MCPTokenInfo:
-    """Information about a validated MCP token."""
+    """Information about a validated MCP token.
+
+    is_service_principal is always True in practice - mcp_tokens are for
+    service-principal/M2M callers only, human callers use forwarded-identity
+    (OBO) auth instead. See docs/notes/MCP_AUTH_REWORK_PRD.md.
+    """
     id: UUID
     name: str
     scopes: List[str]
     created_by: Optional[str]
     created_at: datetime
     expires_at: Optional[datetime]
+    is_service_principal: bool = True
 
 
 @dataclass
@@ -45,6 +51,7 @@ class GeneratedToken:
     scopes: List[str]
     created_at: datetime
     expires_at: Optional[datetime]
+    is_service_principal: bool = True
 
 
 class MCPTokensManager:
@@ -66,20 +73,32 @@ class MCPTokensManager:
         name: str,
         scopes: List[str],
         created_by: Optional[str] = None,
-        expires_days: Optional[int] = 90
+        expires_days: Optional[int] = 90,
+        is_service_principal: bool = True,
     ) -> GeneratedToken:
         """
         Generate a new MCP API token.
-        
+
         Args:
             name: Human-readable name for the token
             scopes: List of allowed scopes (e.g., ["data-products:read", "sparql:query"])
             created_by: Email/identifier of the user creating the token
             expires_days: Number of days until expiration (None for no expiration)
-            
+            is_service_principal: Must be True - see db_models/mcp_tokens.py
+
         Returns:
             GeneratedToken containing the plaintext token (shown only once)
+
+        Raises:
+            ValueError: if is_service_principal is False - mcp_tokens are for
+                M2M callers only; human callers use forwarded-identity (OBO)
+                auth instead (see docs/notes/MCP_AUTH_REWORK_PRD.md).
         """
+        if not is_service_principal:
+            raise ValueError(
+                "mcp_tokens are for service-principal/M2M callers only. "
+                "Human callers should use forwarded-identity (OBO) auth instead."
+            )
         # Generate secure random token
         random_bytes = secrets.token_bytes(TOKEN_BYTE_LENGTH)
         plaintext_token = TOKEN_PREFIX + secrets.token_urlsafe(TOKEN_BYTE_LENGTH)
@@ -95,25 +114,29 @@ class MCPTokensManager:
         if expires_days is not None:
             expires_at = datetime.now(timezone.utc) + timedelta(days=expires_days)
         
-        # Store in database
+        # Store in database. is_service_principal isn't persisted - it's
+        # always True by construction (validated above), so it's surfaced as
+        # a constant on the returned dataclass rather than a DB column. See
+        # db_models/mcp_tokens.py.
         db_token = mcp_tokens_repo.create(
             db=self._db,
             name=name,
             token_hash=token_hash,
             scopes=scopes,
             created_by=created_by,
-            expires_at=expires_at
+            expires_at=expires_at,
         )
-        
+
         logger.info(f"Generated MCP token: id={db_token.id}, name='{name}', scopes={scopes}")
-        
+
         return GeneratedToken(
             id=db_token.id,
             name=name,
             token=plaintext_token,
             scopes=scopes,
             created_at=db_token.created_at,
-            expires_at=expires_at
+            expires_at=expires_at,
+            is_service_principal=is_service_principal,
         )
     
     def validate_token(self, token: str) -> Optional[MCPTokenInfo]:
@@ -158,7 +181,9 @@ class MCPTokensManager:
                         scopes=db_token.scopes or [],
                         created_by=db_token.created_by,
                         created_at=db_token.created_at,
-                        expires_at=db_token.expires_at
+                        expires_at=db_token.expires_at,
+                        # Not a DB column - always True, see db_models/mcp_tokens.py
+                        is_service_principal=True,
                     )
             except Exception as e:
                 logger.error(f"Error checking token {db_token.id}: {e}")

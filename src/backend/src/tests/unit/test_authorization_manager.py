@@ -280,10 +280,83 @@ class TestAuthorizationManager:
             approval_privileges={},
         )
         mock_settings_manager.list_app_roles.return_value = [role_with_unknown]
-        
+
         result = manager.get_user_effective_permissions(["test"])
-        
+
         # Should process valid features and skip unknown ones
         assert result["data-products"] == FeatureAccessLevel.READ_WRITE
         assert "unknown-feature-xyz" not in result or result.get("unknown-feature-xyz") == FeatureAccessLevel.NONE
+
+
+class TestIsUserOntosAdmin:
+    """Tests for is_user_ontos_admin - the canonical Ontos-admin check.
+
+    Ported alongside the upstream fix (databrickslabs/ontos#404/#458) that
+    decoupled Ontos admin status from settings:ADMIN, which previously let any
+    user with Settings write access manage MCP tokens.
+    """
+
+    @pytest.fixture
+    def mock_settings_manager(self):
+        return Mock()
+
+    @pytest.fixture
+    def manager(self, mock_settings_manager):
+        return AuthorizationManager(settings_manager=mock_settings_manager)
+
+    @pytest.fixture
+    def is_admin_role(self):
+        """A role flagged is_admin=True - the canonical admin marker."""
+        return AppRole(
+            id=uuid.uuid4(),
+            name="Ontos Admin",
+            description="Canonical admin role",
+            assigned_groups=["ontos-admins"],
+            feature_permissions={"settings": FeatureAccessLevel.ADMIN},
+            home_sections=[],
+            approval_privileges={},
+            is_admin=True,
+        )
+
+    @pytest.fixture
+    def settings_admin_role(self):
+        """A role with settings:ADMIN but NOT is_admin=True - must NOT count as Ontos admin."""
+        return AppRole(
+            id=uuid.uuid4(),
+            name="Settings Manager",
+            description="Can administer Settings but is not an Ontos admin",
+            assigned_groups=["settings-managers"],
+            feature_permissions={"settings": FeatureAccessLevel.ADMIN},
+            home_sections=[],
+            approval_privileges={},
+            is_admin=False,
+        )
+
+    def test_member_of_is_admin_role_is_admin(self, manager, mock_settings_manager, is_admin_role):
+        mock_settings_manager.list_app_roles.return_value = [is_admin_role]
+        assert manager.is_user_ontos_admin(["ontos-admins"]) is True
+
+    def test_case_insensitive_group_match(self, manager, mock_settings_manager, is_admin_role):
+        mock_settings_manager.list_app_roles.return_value = [is_admin_role]
+        assert manager.is_user_ontos_admin(["Ontos-Admins"]) is True
+
+    def test_settings_admin_without_is_admin_flag_is_not_ontos_admin(
+        self, manager, mock_settings_manager, settings_admin_role
+    ):
+        """The exact regression this fix closes: settings:ADMIN != Ontos admin."""
+        mock_settings_manager.list_app_roles.return_value = [settings_admin_role]
+        assert manager.is_user_ontos_admin(["settings-managers"]) is False
+
+    def test_no_groups_denied(self, manager, mock_settings_manager, is_admin_role):
+        mock_settings_manager.list_app_roles.return_value = [is_admin_role]
+        assert manager.is_user_ontos_admin(None) is False
+        assert manager.is_user_ontos_admin([]) is False
+
+    def test_no_matching_group_denied(self, manager, mock_settings_manager, is_admin_role):
+        mock_settings_manager.list_app_roles.return_value = [is_admin_role]
+        assert manager.is_user_ontos_admin(["some-other-group"]) is False
+
+    def test_role_lookup_failure_fails_closed(self, manager, mock_settings_manager):
+        mock_settings_manager.list_app_roles.side_effect = Exception("DB down")
+        assert manager.is_user_ontos_admin(["ontos-admins"]) is False
 
