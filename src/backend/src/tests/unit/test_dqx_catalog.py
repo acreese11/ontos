@@ -182,7 +182,7 @@ class TestCheckToSqlPredicate:
 
     def test_in_list_quotes_and_allows_null(self):
         p = check_to_sql_predicate("is_in_list", {"column": "s", "allowed": ["A", "O'B"]})
-        assert "s IN ('A', 'O''B')" in p and "s IS NULL" in p  # escaped + null-tolerant
+        assert "`s` IN ('A', 'O''B')" in p and "`s` IS NULL" in p  # escaped + null-tolerant
 
     def test_not_in_list(self):
         p = check_to_sql_predicate("is_not_in_list", {"column": "s", "forbidden": ["X"]})
@@ -193,6 +193,19 @@ class TestCheckToSqlPredicate:
 
     def test_not_in_future(self):
         assert "current_timestamp()" in check_to_sql_predicate("is_not_in_future", {"column": "ts"})
+
+    def test_column_name_is_backtick_quoted(self):
+        """Reserved-word/space-containing column names must not break the query."""
+        p = check_to_sql_predicate("is_not_in_future", {"column": "order"})
+        assert "`order`" in p and "(order " not in p
+
+    def test_column_name_injection_is_neutralized(self):
+        """A crafted `column` value must not escape the backtick-quoted identifier."""
+        malicious = "x`); DROP TABLE t; --"
+        p = check_to_sql_predicate("is_not_in_future", {"column": malicious})
+        # The embedded backtick must be escaped (doubled), not left able to close the identifier.
+        assert "``" in p
+        assert "DROP TABLE t; --`" in p  # neutralized inside the quoted identifier, not executable SQL
 
     def test_dataset_level_returns_none(self):
         for fn in ("is_unique", "foreign_key", "is_aggr_not_greater_than", "has_no_aggr_outliers"):

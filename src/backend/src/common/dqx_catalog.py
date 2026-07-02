@@ -305,6 +305,16 @@ def _sql_str_literal(value: Any) -> str:
     return "'" + str(value).replace("'", "''") + "'"
 
 
+def _sql_identifier(name: str) -> str:
+    """Backtick-quote a column identifier, escaping embedded backticks.
+
+    Matches the quoting convention already used for generated SQL elsewhere
+    (see ``_column_stats`` in contract_generator_manager.py). Without this,
+    a column name containing a space/reserved word breaks the query, and a
+    crafted ``column`` argument could inject SQL into the predicate."""
+    return "`" + str(name).replace("`", "``") + "`"
+
+
 def check_to_sql_predicate(function: str, arguments: Dict[str, Any]) -> Optional[str]:
     """Translate a DQX check into a SQL boolean predicate that is TRUE for PASSING rows,
     for the sample-preview ("Test this check") path.
@@ -316,34 +326,35 @@ def check_to_sql_predicate(function: str, arguments: Dict[str, Any]) -> Optional
     on purpose: a graceful N/A beats a misleading preview."""
     args = arguments or {}
     col = args.get("column")
+    safe_col = _sql_identifier(col) if col else None
 
     if function == "sql_expression":
         return (args.get("expression") or "").strip() or None
 
-    if function == "is_in_list" and col:
+    if function == "is_in_list" and safe_col:
         vals = args.get("allowed") or []
         if not vals:
             return None
         lits = ", ".join(_sql_str_literal(v) for v in vals)
-        return f"({col} IS NULL OR {col} IN ({lits}))"  # DQX is_in_list allows nulls
+        return f"({safe_col} IS NULL OR {safe_col} IN ({lits}))"  # DQX is_in_list allows nulls
 
-    if function == "is_not_in_list" and col:
+    if function == "is_not_in_list" and safe_col:
         vals = args.get("forbidden") or []
         if not vals:
             return None
         lits = ", ".join(_sql_str_literal(v) for v in vals)
-        return f"({col} IS NULL OR {col} NOT IN ({lits}))"
+        return f"({safe_col} IS NULL OR {safe_col} NOT IN ({lits}))"
 
-    if function == "is_data_fresh" and col:
+    if function == "is_data_fresh" and safe_col:
         n = args.get("max_age_minutes")
         try:
             n = int(n)
         except (TypeError, ValueError):
             return None
-        return f"{col} >= current_timestamp() - INTERVAL {n} MINUTES"
+        return f"{safe_col} >= current_timestamp() - INTERVAL {n} MINUTES"
 
-    if function in ("is_not_in_future", "is_not_in_near_future") and col:
-        return f"({col} IS NULL OR {col} <= current_timestamp())"
+    if function in ("is_not_in_future", "is_not_in_near_future") and safe_col:
+        return f"({safe_col} IS NULL OR {safe_col} <= current_timestamp())"
 
     # Dataset-level or not-confidently-translatable (regex/date/json/geo) → no row preview.
     return None
