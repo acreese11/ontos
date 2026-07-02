@@ -32,12 +32,16 @@ class MCPTokenDb(Base):
 
     Note: mcp_tokens are for service-principal/M2M callers only (enforced at
     the API layer, see routes/mcp_tokens_routes.py). There is no
-    `is_service_principal` column here - since that's always True by
-    construction for every row, it doesn't vary and isn't persisted; it's
-    surfaced as a hardcoded constant in the API models instead (see
-    models/mcp_tokens.py). Deliberately avoids an ALTER TABLE on this table -
-    see docs/notes/MCP_AUTH_REWORK_PRD.md and the Phase 3 incident notes for
-    why this table's ownership makes DDL changes risky in production.
+    `is_service_principal` column here - every existing row predates the
+    identity-based auth rework and is therefore M2M by definition, so the
+    value is currently constant and is surfaced as a hardcoded True in the
+    API models instead (see models/mcp_tokens.py) rather than persisted.
+    This means the DB currently has no way to distinguish a pre-rework
+    human-issued token from a genuine M2M one - if that distinction ever
+    matters (e.g. to selectively revoke old human tokens), a real
+    `is_service_principal` column and backfill migration will be needed;
+    see docs/notes/MCP_AUTH_REWORK_PRD.md §7 (rollout plan) and
+    MCP_AUTH_REWORK_EXECUTION_PLAN.md Phase 3.
     """
     __tablename__ = "mcp_tokens"
 

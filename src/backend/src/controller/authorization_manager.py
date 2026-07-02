@@ -139,6 +139,17 @@ class AuthorizationManager:
         versa). Ported from upstream databrickslabs/ontos#404/#458, which fixed
         exactly this conflation for the role switcher and MCP token routes.
 
+        Distinct from two other admin checks in this codebase, which answer
+        different questions - don't use them interchangeably:
+        - ``common.authorization.is_user_admin``: workspace-group membership
+          only (``APP_ADMIN_DEFAULT_GROUPS``), no Ontos role system involved.
+        - ``common.authorization.is_user_feature_admin``: per-feature
+          ownership-bypass check (workspace admin OR ``FeatureAccessLevel.ADMIN``
+          on one specific feature), not a global "is this user an admin".
+        This method is the only one of the three that checks role-level
+        ``is_admin=True``, and is the one to use for global Ontos-admin gates
+        like MCP token management.
+
         Args:
             user_groups: Caller's workspace groups (from SDK or identity headers).
 
