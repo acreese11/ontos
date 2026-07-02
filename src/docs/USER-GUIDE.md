@@ -2873,6 +2873,30 @@ The **Model Context Protocol** is a standard for AI assistants to interact with 
 - **Secure Execution**: Tools are executed with scope-based authorization
 - **Programmatic Access**: Automate data governance workflows via AI
 
+### Authentication Model
+
+The MCP endpoint supports two authentication paths:
+
+1. **Forwarded identity (preferred)** — for human users, and for AI assistants
+   acting *on behalf of* a signed-in user (e.g. Genie One, Genie Code, or any
+   integration behind a Unity Catalog HTTP connection). No token is needed:
+   the caller is resolved from the same identity headers Databricks Apps
+   already injects for every other Ontos route, and the tools it can see and
+   call are gated by that user's **real Ontos permissions** — exactly the
+   `FeatureAccessLevel` they already have in the UI, nothing more and
+   nothing less. There is no separate "AI assistant scope" to configure or
+   keep in sync with a user's role.
+2. **MCP Tokens (service-principal / M2M fallback)** — for callers with no
+   human to act on behalf of, such as a scheduled job or an external
+   automation calling the endpoint directly. See [MCP Tokens](#mcp-tokens)
+   below. **Important:** this path cannot be used behind a Unity Catalog HTTP
+   connection (only direct/bespoke HTTP callers) — for Genie One, Genie Code,
+   or any UC-connection-based integration, forwarded identity is the only
+   option.
+
+If both are absent, the request is rejected. If forwarded-identity headers
+are present, they take priority over an `X-API-Key`.
+
 ### Use Cases
 
 | Use Case | Description |
@@ -2885,7 +2909,12 @@ The **Model Context Protocol** is a standard for AI assistants to interact with 
 
 ### MCP Tokens
 
-MCP tokens are API keys that authenticate AI assistants to the MCP endpoint. Each token has:
+MCP tokens are for **service-principal / machine-to-machine callers only** —
+automations with no human user to act on behalf of. Most AI assistants,
+including Genie One, don't need a token at all: they authenticate as the
+signed-in user via forwarded identity (see [Authentication
+Model](#authentication-model)) and only see the tools that user's Ontos
+role already grants. Each token has:
 
 - **Name**: Descriptive identifier
 - **Scopes**: Permissions granted (what tools can be used)
@@ -2956,7 +2985,7 @@ Scopes control which tools an MCP token can access. Use the principle of least p
 | Scope | Tools Available |
 |-------|-----------------|
 | `data-products:write` | Create, update, delete data products |
-| `contracts:write` | Create, update, delete data contracts |
+| `contracts:write` | Create, update, and generate data contracts (**not** delete — see `contracts:delete` below) |
 | `domains:write` | Create, update, delete domains |
 | `teams:write` | Create, update, delete teams |
 | `projects:write` | Create, update, delete projects |
@@ -2967,6 +2996,7 @@ Scopes control which tools an MCP token can access. Use the principle of least p
 
 | Scope | Description |
 |-------|-------------|
+| `contracts:delete` | Delete data contracts — deliberately separate from `contracts:write` so it can require admin-level access (`FeatureAccessLevel.ADMIN` on `data-contracts`) rather than riding the same level as create/update |
 | `sparql:query` | Execute SPARQL queries against the semantic model graph |
 | `*` | Full access to all tools (admin only) |
 
@@ -2990,7 +3020,14 @@ POST /api/mcp
 
 #### Authentication
 
-Include your MCP token in the `X-API-Key` header:
+If you're calling the endpoint as a signed-in Databricks user (or via a
+Unity Catalog HTTP connection, AI Gateway, Genie One, or Genie Code), no
+token is required — the request is authenticated via forwarded identity and
+gated by your own Ontos permissions automatically.
+
+For service-principal / M2M callers only (see [Authentication
+Model](#authentication-model)), include your MCP token in the `X-API-Key`
+header instead:
 
 ```bash
 curl -X POST https://your-ontos-instance/api/mcp \

@@ -1,8 +1,10 @@
 /**
  * MCP Tokens Settings Component
- * 
- * Allows administrators to create, view, and revoke MCP API tokens
- * for AI assistant integrations.
+ *
+ * Allows administrators to create, view, and revoke MCP API tokens for
+ * service-principal / machine-to-machine integrations only. Human users
+ * (including most AI assistants, e.g. Genie One) authenticate via forwarded
+ * identity instead and never need a token here.
  */
 
 import { useState, useEffect, useCallback } from 'react';
