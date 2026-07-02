@@ -3367,6 +3367,7 @@ export default function DataContractDetails() {
         onOpenChange={setIsQualityRuleFormOpen}
         initial={editingQualityRuleIndex !== null ? contract.qualityRules?.[editingQualityRuleIndex] : undefined}
         onSubmit={editingQualityRuleIndex !== null ? handleUpdateQualityRule : handleAddQualityRule}
+        contractId={contract.id}
       />
 
       <TeamMemberFormDialog

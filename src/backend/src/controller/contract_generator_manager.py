@@ -332,7 +332,15 @@ class GenerationResult:
 # UC inspection helpers
 # ──────────────────────────────────────────────────────────────
 def _run_sql(ws: WorkspaceClient, warehouse_id: str, statement: str, timeout_s: int = 30) -> List[List[Any]]:
-    """Run a SQL statement and return rows (list of lists). Raises on error/timeout."""
+    """Run a SQL statement and return rows (list of lists). Raises on error/timeout.
+
+    On a client-side timeout (deadline reached while the statement is still
+    PENDING/RUNNING, e.g. a cold-starting serverless warehouse), the statement
+    is explicitly cancelled via the API before raising — otherwise it keeps
+    running on the warehouse with nothing left to observe or clean it up,
+    which is wasteful and, for a caller that retries on every timeout (like
+    the "Test this check" preview), can pile up orphaned queries.
+    """
     resp = ws.statement_execution.execute_statement(
         warehouse_id=warehouse_id,
         statement=statement,
@@ -345,6 +353,12 @@ def _run_sql(ws: WorkspaceClient, warehouse_id: str, statement: str, timeout_s: 
         time.sleep(0.5)
         resp = ws.statement_execution.get_statement(statement_id=statement_id)
         state = resp.status.state if resp.status else None
+    if state in (StatementState.PENDING, StatementState.RUNNING):
+        try:
+            ws.statement_execution.cancel_execution(statement_id=statement_id)
+        except Exception:
+            logger.warning("Failed to cancel timed-out statement %s", statement_id, exc_info=True)
+        raise RuntimeError(f"SQL timed out after {timeout_s}s: state={state} ({statement[:120]}...)")
     if state != StatementState.SUCCEEDED:
         err = resp.status.error.message if (resp.status and resp.status.error) else f"state={state}"
         raise RuntimeError(f"SQL failed: {err} ({statement[:120]}...)")

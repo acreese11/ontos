@@ -2695,12 +2695,19 @@ class DataContractsManager(DeliveryMixin, SearchableAsset):
                 ).all()
                 
                 if schema_objects:
-                    # Remove ALL existing quality checks for all schema objects in this contract
+                    # Remove existing OBJECT-level quality checks only (property_id IS NULL).
+                    # `qualityRules` here is the object-level list; column-level (property_id
+                    # set) checks are owned by each property's `quality` list and are
+                    # (re)persisted by _create_schema_objects above, in this same request.
+                    # An unscoped delete here would wipe those column-level checks the moment
+                    # they're created, silently discarding every column-level quality rule on
+                    # every update. Backported from upstream databrickslabs/ontos#528.
                     for schema_obj in schema_objects:
                         db.query(DataQualityCheckDb).filter(
-                            DataQualityCheckDb.object_id == schema_obj.id
+                            DataQualityCheckDb.object_id == schema_obj.id,
+                            DataQualityCheckDb.property_id.is_(None),
                         ).delete()
-                    
+
                     # Add new quality rules
                     if data_dict['qualityRules']:
                         self._create_quality_checks(db, contract_id, data_dict['qualityRules'])

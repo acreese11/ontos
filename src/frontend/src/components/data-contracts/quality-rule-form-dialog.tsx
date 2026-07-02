@@ -9,6 +9,7 @@ import { Switch } from '@/components/ui/switch'
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useToast } from '@/hooks/use-toast'
+import { useApi } from '@/hooks/use-api'
 import type { QualityRule } from '@/types/data-contract'
 import type { CheckGrain, DqxCheckArg, DqxCheckDef } from '@/types/dqx-catalog'
 import { useDqxCatalog, checksForGrain } from '@/hooks/use-dqx-catalog'
@@ -25,6 +26,9 @@ type QualityRuleFormProps = {
   // column argument) and the columns available for column-picker args.
   column?: string
   availableColumns?: string[]
+  // When set, enables the "Test this check" sample preview (POSTs to the contract's
+  // test-check endpoint). Omit to hide the button (e.g. where no contract id is in scope).
+  contractId?: string
 }
 
 const QUALITY_DIMENSIONS = ['accuracy', 'completeness', 'conformity', 'consistency', 'coverage', 'timeliness', 'uniqueness']
@@ -104,10 +108,14 @@ export default function QualityRuleFormDialog({
   grain = 'object',
   column,
   availableColumns = [],
+  contractId,
 }: QualityRuleFormProps) {
   const { toast } = useToast()
+  const { post } = useApi()
   const { catalog, loading, error } = useDqxCatalog()
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [testing, setTesting] = useState(false)
+  const [testResult, setTestResult] = useState<any>(null)
 
   const [fn, setFn] = useState<string>('')
   const [argValues, setArgValues] = useState<Record<string, unknown>>({})
@@ -213,7 +221,23 @@ export default function QualityRuleFormDialog({
     }
   }, [selected, previewArgs, name, severity, column])
 
-  const setArg = (argName: string, value: unknown) => setArgValues((p) => ({ ...p, [argName]: value }))
+  const setArg = (argName: string, value: unknown) => {
+    setArgValues((p) => ({ ...p, [argName]: value }))
+    setTestResult(null)  // args changed → previous sample result is stale
+  }
+
+  // Dry-run the selected check over a sample of the live table ("Test this check").
+  const runTest = async () => {
+    if (!selected || !contractId) return
+    setTesting(true)
+    setTestResult(null)
+    const { data, error: err } = await post<any>(
+      `/api/data-contracts/${contractId}/test-check`,
+      { function: selected.function, arguments: previewArgs },
+    )
+    setTesting(false)
+    setTestResult(err ? { error: err } : data)
+  }
 
   const handleSubmit = async () => {
     if (!name.trim()) {
@@ -477,6 +501,32 @@ export default function QualityRuleFormDialog({
                 <pre className="rounded-md border bg-muted/40 p-3 text-xs overflow-x-auto font-mono">
 {JSON.stringify(previewImpl, null, 2)}
                 </pre>
+              </div>
+            )}
+
+            {/* Test this check against a sample of the live table */}
+            {selected && contractId && (
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <Button type="button" variant="outline" size="sm" onClick={runTest} disabled={testing}>
+                    {testing ? 'Testing…' : 'Test this check'}
+                  </Button>
+                  <span className="text-xs text-muted-foreground">Dry-run over a sample of the live table.</span>
+                </div>
+                {testResult && (
+                  <div className="rounded-md border p-2 text-sm">
+                    {testResult.error ? (
+                      <span className="text-destructive">Couldn't run: {String(testResult.error)}</span>
+                    ) : testResult.previewable === false ? (
+                      <span className="text-muted-foreground">{testResult.reason || 'Preview runs at enforcement time.'}</span>
+                    ) : (
+                      <span className={testResult.failed ? 'text-destructive' : 'text-emerald-600'}>
+                        Sampled {testResult.sampled} rows — <strong>{testResult.passed} passed / {testResult.failed} failed</strong>
+                        {testResult.failed === 0 ? ' ✓' : ''}
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
             )}
               </div>
