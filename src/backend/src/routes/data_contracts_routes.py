@@ -4861,9 +4861,11 @@ async def test_quality_check(
             f"SELECT count(*) AS total, count_if(({predicate}) IS NOT TRUE) AS failed "
             f"FROM (SELECT * FROM {physical} LIMIT {sample_n}) _s"
         )
-        # Keep the request SNAPPY (interactive preview): a short timeout, and on a cold
-        # serverless warehouse (the first query kicks it off but won't finish in time) we
-        # return a clear "starting up, try again" instead of blocking the UI for minutes.
+        # Keep the request SNAPPY (interactive preview): a short 20s timeout, not a long
+        # block — waiting minutes on an HTTP request risks proxy/load-balancer timeouts
+        # and terrible UX regardless. On a cold serverless warehouse (the first query
+        # kicks it off but won't finish in time) we cancel it (see _run_sql) and return a
+        # clear "starting up, try again" instead of blocking the UI.
         rows = _run_sql(ws, warehouse_id, sql, timeout_s=20)
         total = int(rows[0][0])
         failed = int(rows[0][1])
