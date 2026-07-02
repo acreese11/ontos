@@ -18,7 +18,6 @@ rather than given a permissive default.
 
 from typing import Dict, Optional, Tuple
 
-from sqlalchemy.orm import Session
 from fastapi import Request
 
 from src.common.features import FeatureAccessLevel

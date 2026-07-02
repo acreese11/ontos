@@ -117,11 +117,30 @@ def caller_identity_key(caller: "MCPCaller") -> str:
     """
     if isinstance(caller, UserInfo):
         return f"user:{caller.email}"
-    return f"token:{caller.name}"
+    # caller.name is a user-chosen display label with no uniqueness constraint
+    # (see db_models/mcp_tokens.py - only token_hash is unique) - two tokens
+    # sharing a name would collide here. caller.id (the token row's UUID PK)
+    # is the actual stable, unique identifier.
+    return f"token:{caller.id}"
 
 
 def wants_sse(request: Request) -> bool:
-    """Whether to respond to this request with SSE instead of plain JSON.
+    """Whether the client's Accept header asks for an SSE response.
+
+    Used by the GET SSE-stream endpoint (`mcp_sse_stream`) to decide whether
+    to open a stream at all - that endpoint's entire purpose is serving SSE,
+    so this stays a real Accept-header check. For the POST JSON-RPC endpoint's
+    response-shaping decision, see `post_wants_sse` below instead - Databricks'
+    MCP client sends this header on every POST regardless of whether it can
+    actually consume an SSE response, so the POST handler must not use this
+    function directly (see `post_wants_sse`'s docstring).
+    """
+    accept = request.headers.get("accept", "")
+    return "text/event-stream" in accept
+
+
+def post_wants_sse(request: Request) -> bool:
+    """Whether to respond to a POST /api/mcp request with SSE instead of JSON.
 
     Always False for now. Databricks' MCP client (AI Gateway / Genie One /
     Playground) sends `Accept: text/event-stream` on every request regardless
@@ -134,6 +153,11 @@ def wants_sse(request: Request) -> bool:
     picker) worked fine. Another MCP server in this same account hit the
     identical problem and worked around it with a dedicated SSE->JSON
     "normalization" proxy app; forcing JSON here instead avoids needing one.
+
+    Deliberately separate from `wants_sse` (used by the GET stream endpoint,
+    where a real Accept-header check is still correct) - collapsing the two
+    previously turned this override into an unconditional 405 on GET
+    /api/mcp regardless of Accept header, which is what this split fixes.
 
     The `request` parameter is unused now but kept so this can be reverted to
     real Accept-header sniffing if Databricks' client behavior changes.
@@ -648,11 +672,10 @@ async def mcp_handler(
     MCP token for service-principal/M2M callers.
     Supports methods: initialize, notifications/initialized, ping, tools/list, tools/call
 
-    Response format depends on Accept header:
-    - Accept: text/event-stream -> SSE stream response
-    - Accept: application/json (or default) -> JSON response
+    Response format depends on Accept header - see `post_wants_sse` for why
+    this is currently always JSON regardless of the Accept header sent.
     """
-    use_sse = wants_sse(request)
+    use_sse = post_wants_sse(request)
     session_id = mcp_session_id
     
     # Helper to create error response in the appropriate format
