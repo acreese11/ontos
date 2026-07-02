@@ -28,11 +28,11 @@ class MCPTokensRepository:
         token_hash: str,
         scopes: List[str],
         created_by: Optional[str] = None,
-        expires_at: Optional[datetime] = None
+        expires_at: Optional[datetime] = None,
     ) -> MCPTokenDb:
         """
         Create a new MCP token.
-        
+
         Args:
             db: Database session
             name: Human-readable name for the token
@@ -40,7 +40,7 @@ class MCPTokensRepository:
             scopes: List of allowed scopes
             created_by: Email/identifier of the creator
             expires_at: Optional expiration datetime
-            
+
         Returns:
             The created MCPTokenDb instance
         """
@@ -49,7 +49,7 @@ class MCPTokensRepository:
             token_hash=token_hash,
             scopes=scopes,
             created_by=created_by,
-            expires_at=expires_at
+            expires_at=expires_at,
         )
         db.add(token)
         db.flush()
