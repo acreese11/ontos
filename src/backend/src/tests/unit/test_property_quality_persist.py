@@ -112,3 +112,63 @@ class TestPropertyQualityPersist:
         c = db_session.query(DataQualityCheckDb).filter(DataQualityCheckDb.property_id.isnot(None)).first()
         assert c is not None and isinstance(c.implementation, str)
         assert json.loads(c.implementation)["check"]["function"] == "is_not_null_and_not_empty"
+
+
+class TestUpdatePathDoesNotWipeColumnLevelChecks:
+    """update_contract_with_relations's `qualityRules` handling used to delete ALL
+    DataQualityCheckDb rows for a schema object (unscoped by property_id) whenever a
+    payload included `qualityRules` - including any already-persisted column-level
+    checks on that schema object. This is the realistic sequence: a prior request
+    created + committed a column-level check (schema editor's per-column Quality
+    tab), then a *later*, unrelated update sends only a `qualityRules` (object-level)
+    change without re-sending `schema` at all - which the frontend commonly does for
+    a partial update. Backported from upstream databrickslabs/ontos#528, which found
+    and fixed the same bug independently.
+
+    (Note: a single request that both creates a column-level check AND sets
+    `qualityRules` does NOT reproduce this under this codebase's autoflush=False
+    session config - the DELETE runs before the pending INSERT is flushed to the DB,
+    so it has nothing to match. The real exposure is cross-request, once the
+    column-level check is a durably committed row.)
+    """
+
+    def test_qualityRules_only_update_preserves_prior_column_level_checks(self, db_session):
+        mgr = DataContractsManager(data_dir=Path("/tmp"))
+        contract = _make_contract(db_session)
+
+        # Step 1 (a prior request): create + durably persist a schema with a
+        # column-level quality check.
+        schema_data = [{
+            "name": "live_flights",
+            "physicalName": "safe_skies.flight_ops.adsb_v2",
+            "properties": [{
+                "name": "icao24", "logicalType": "string",
+                "quality": [{
+                    "name": "icao24_in_list", "type": "custom", "engine": "dqx",
+                    "implementation": _impl_str("icao24_in_list"),
+                    "dimension": "validity", "severity": "error", "level": "property",
+                }],
+            }],
+        }]
+        mgr._create_schema_objects(db_session, contract.id, schema_data, current_user="t@safe-skies.demo")
+        db_session.commit()  # durably persisted, as it would be at the end of that prior request
+
+        assert db_session.query(DataQualityCheckDb).filter(
+            DataQualityCheckDb.property_id.isnot(None)
+        ).count() == 1, "setup sanity check failed - column-level check wasn't persisted"
+
+        # Step 2 (a later, unrelated request): update only `qualityRules`
+        # (object-level) - no `schema` key at all, so _create_schema_objects never
+        # runs in this request.
+        update_payload = {"qualityRules": []}
+        mgr.update_contract_with_relations(db_session, contract.id, update_payload, current_user="t@safe-skies.demo")
+        db_session.flush()
+
+        prop_checks = db_session.query(DataQualityCheckDb).filter(
+            DataQualityCheckDb.property_id.isnot(None)
+        ).all()
+        assert len(prop_checks) == 1, (
+            "column-level quality check was wiped by the unscoped qualityRules delete "
+            "on the update path"
+        )
+        assert prop_checks[0].name == "icao24_in_list"
